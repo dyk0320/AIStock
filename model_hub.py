@@ -21,7 +21,7 @@ def get_config():
         "deepseek_base_url": st.secrets.get("DEEPSEEK_BASE_URL",
                              "https://api.deepseek.com"),
         "qwen_key": st.secrets.get("QWEN_API_KEY", ""),
-        "qwen_model": st.secrets.get("QWEN_MODEL", "qwen3-max-2026-01-23"),
+        "qwen_model": st.secrets.get("QWEN_MODEL", "qwen3-max"),
         "qwen_base_url": st.secrets.get("QWEN_BASE_URL",
             "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     }
