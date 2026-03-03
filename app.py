@@ -25,7 +25,7 @@ st.set_page_config(
     page_title="A股智能分析系统",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="auto",
+    initial_sidebar_state="collapsed",
 )
 
 # =====================================================================
@@ -147,6 +147,9 @@ st.markdown("""
         .metric-card .value { font-size: 1rem; }
         .levels-grid { grid-template-columns: repeat(2, 1fr); }
     }
+
+    /* ---- 输入行对齐 ---- */
+    [data-testid="column"] { display: flex; align-items: end; }
 </style>
 
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
@@ -612,51 +615,45 @@ def search_news(client, stock_name, business, model):
 # 主界面
 # =====================================================================
 def main():
-    # Sidebar
+    # Sidebar (secondary settings only)
     with st.sidebar:
-        st.markdown('<div class="sidebar-title">📈 A股智能分析系统</div>', unsafe_allow_html=True)
-        st.caption("Gemini AI + 技术指标引擎 + 实时联网搜索")
-
-        st.divider()
-
-        stock_code = st.text_input(
-            "股票代码",
-            placeholder="输入6位代码，如 600519",
-            max_chars=6,
-            help="支持沪深A股，输入纯数字代码",
-        )
-
-        col1, col2 = st.columns(2)
-        with col1:
-            kline_days = st.selectbox("回溯天数", [30, 60, 90, 120], index=1)
-        with col2:
-            enable_search = st.toggle("联网搜索", value=True, help="使用Google Search获取最新消息")
-
-        analyze_btn = st.button("🚀 开始分析", type="primary", use_container_width=True)
-
+        st.markdown('<div class="sidebar-title">⚙️ 分析设置</div>', unsafe_allow_html=True)
+        kline_days = st.selectbox("K线回溯天数", [30, 60, 90, 120], index=1)
+        enable_search = st.toggle("联网搜索", value=True, help="使用Google Search获取最新消息")
         st.divider()
         st.caption("⚠️ 分析仅供参考，不构成投资建议")
         st.caption(f"📅 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
-    # Main area
-    if not analyze_btn or not stock_code:
-        # Landing page
-        st.markdown("## 📊 A股智能分析系统")
-        st.markdown("在左侧菜单输入股票代码，点击 **开始分析** 获取 AI 深度研报。<br><small>📱 手机端请点左上角 **>** 打开菜单</small>", unsafe_allow_html=True)
+    # Main area - input always visible
+    st.markdown("## 📈 A股智能分析系统")
+    st.caption("Gemini AI + 技术指标引擎 + 实时联网搜索")
 
+    input_col1, input_col2 = st.columns([3, 1])
+    with input_col1:
+        stock_code = st.text_input(
+            "股票代码",
+            placeholder="输入6位代码，如 600519",
+            max_chars=6,
+            label_visibility="collapsed",
+            help="支持沪深A股，输入纯数字代码",
+        )
+    with input_col2:
+        analyze_btn = st.button("🚀 分析", type="primary", use_container_width=True)
+
+    if not analyze_btn or not stock_code:
         st.markdown("""
         <div class="landing-grid">
             <div class="landing-card">
-                <h4>🔍 技术面分析</h4>
-                <p>MA / MACD / RSI / 布林带<br>支撑压力位 · 量价背离</p>
+                <h4>🔍 技术面</h4>
+                <p>MA / MACD / RSI / 布林带<br>支撑压力 · 量价背离</p>
             </div>
             <div class="landing-card">
-                <h4>🌐 实时消息面</h4>
-                <p>Gemini + Google Search<br>政策 · 公告 · 行业动向</p>
+                <h4>🌐 消息面</h4>
+                <p>Gemini + Google Search<br>政策 · 公告 · 行业</p>
             </div>
             <div class="landing-card">
-                <h4>🤖 AI 深度推理</h4>
-                <p>多空评分 · 趋势判断<br>交易策略 · 风险提示</p>
+                <h4>🤖 AI研报</h4>
+                <p>多空评分 · 趋势判断<br>策略 · 风险提示</p>
             </div>
         </div>
         """, unsafe_allow_html=True)
