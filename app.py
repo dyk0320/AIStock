@@ -108,6 +108,39 @@ st.markdown("""
     .landing-card h4 { margin: 0.4rem 0; font-size: 1rem; }
     .landing-card p { color: #94a3b8; font-size: 0.85rem; margin: 0; }
 
+    /* ---- 辩论 Agent 卡片 ---- */
+    .agent-header {
+        display: flex; align-items: center; gap: 0.6rem;
+        padding: 0.8rem 1rem; border-radius: 10px 10px 0 0;
+        font-weight: 700; font-size: 0.95rem;
+    }
+    .agent-header .agent-emoji { font-size: 1.4rem; }
+    .agent-header .agent-stance {
+        margin-left: auto; padding: 0.15rem 0.6rem; border-radius: 12px;
+        font-size: 0.72rem; font-weight: 600;
+    }
+    .stance-bullish { background: rgba(239,68,68,0.2); color: #ef4444; }
+    .stance-bearish { background: rgba(34,197,94,0.2); color: #22c55e; }
+    .stance-neutral { background: rgba(234,179,8,0.2); color: #eab308; }
+
+    .agent-trend   .agent-header { background: linear-gradient(135deg, #1a1a2e, #1e293b); border-left: 3px solid #f59e0b; }
+    .agent-value   .agent-header { background: linear-gradient(135deg, #1a1a2e, #1e293b); border-left: 3px solid #3b82f6; }
+    .agent-contra  .agent-header { background: linear-gradient(135deg, #1a1a2e, #1e293b); border-left: 3px solid #a855f7; }
+    .agent-swing   .agent-header { background: linear-gradient(135deg, #1a1a2e, #1e293b); border-left: 3px solid #ef4444; }
+
+    .verdict-box {
+        background: linear-gradient(135deg, #0c1524 0%, #1a1a2e 100%);
+        border: 2px solid #f59e0b;
+        border-radius: 12px;
+        padding: 1.2rem 1.5rem;
+        margin-top: 0.5rem;
+    }
+    .verdict-title {
+        display: flex; align-items: center; gap: 0.5rem;
+        font-size: 1.1rem; font-weight: 700; color: #f59e0b;
+        margin-bottom: 0.8rem;
+    }
+
     /* ============ 移动端适配 (≤768px) ============ */
     @media (max-width: 768px) {
         .block-container { padding: 0.8rem 0.6rem !important; }
@@ -139,6 +172,12 @@ st.markdown("""
 
         /* Tab 字号 */
         .stTabs [data-baseweb="tab"] { font-size: 0.8rem !important; padding: 0.4rem 0.6rem !important; }
+
+        /* 辩论卡片 */
+        .agent-header { padding: 0.6rem 0.8rem; font-size: 0.85rem; }
+        .agent-header .agent-emoji { font-size: 1.2rem; }
+        .verdict-box { padding: 0.8rem 1rem; }
+        .verdict-title { font-size: 0.95rem; }
     }
 
     /* ============ 超小屏 (≤480px) ============ */
@@ -490,32 +529,139 @@ def build_rsi_chart(df):
 
 
 # =====================================================================
-# 构建 Gemini 提示词
+# 多 Agent 交易员定义
 # =====================================================================
-SYSTEM_PROMPT = """
-你是一位在A股拥有20年实战经验的顶级交易员, 同时具备机构研究员的基本面分析能力。
-投资哲学: "价值投机"——只做有真实业务支撑的主线标的, 同时利用技术面择时。
+TRADER_AGENTS = [
+    {
+        "id": "trend",
+        "name": "趋势猎手",
+        "emoji": "🐂",
+        "style": "agent-trend",
+        "tab_label": "🐂 趋势猎手",
+        "desc": "趋势跟踪 · 只做主升浪",
+        "system_prompt": """你是"趋势猎手", 一位激进的趋势跟踪交易员, 15年A股实战经验。
+你的核心信仰: 趋势是你唯一的朋友, 均线多头排列就是印钞机。
 
-严格按以下框架输出:
+你的分析框架 (必须严格遵循):
+- 重点关注: MA5/MA10/MA20 排列状态、MACD 方向与力度、成交量趋势
+- 你最看重: 趋势强度和量价配合
+- 你最不在乎: 估值高低 (趋势面前不言顶)
 
-## 一、多空力量评估 (打分制)
-从5个维度各打1-10分:
-- 趋势强度 | 量价配合 | 技术位置 | 基本面质量 | 消息面催化
-汇总综合得分并给出偏多/偏空/中性判断。
+输出要求:
+## 立场: [看多/看空/中性] (用一句话概括理由)
+## 关键论据 (3条, 每条必须引用具体技术数据)
+## 操作建议: 方向 + 关键价位 + 时间维度
+## 信心指数: X/10
 
-## 二、趋势阶段判断
-判断: 底部蓄势 / 突破启动 / 主升浪 / 高位震荡 / 顶部派发 / 下跌趋势 / 超跌反弹
+语气要求: 果断、自信、进攻性强。用交易员的口吻, 不要学术化。200-350字。""",
+    },
+    {
+        "id": "value",
+        "name": "价值守卫",
+        "emoji": "🛡️",
+        "style": "agent-value",
+        "tab_label": "🛡️ 价值守卫",
+        "desc": "基本面为王 · 安全边际",
+        "system_prompt": """你是"价值守卫", 一位保守的价值投资者, 崇尚格雷厄姆和巴菲特。
+你的核心信仰: 好公司+好价格=好投资。短期涨跌是噪音, ROE才是真相。
 
-## 三、交易策略
-1. 操作方向: 买入/持有/减仓/观望
-2. 关键价位: 止损位 / 目标位 / 加仓位
-3. 执行方案: 分批操作建议
-4. 时间维度: 短线/波段/中线
+你的分析框架 (必须严格遵循):
+- 重点关注: ROE、毛利率、净利润增速、营收增速、资产负债率
+- 你最看重: 业务质量和财务健康度
+- 你会质疑: 纯炒作题材股、业绩不匹配的高估值
 
-## 四、最大风险点
-1-2个具体风险, 引用数据。
+输出要求:
+## 立场: [看多/看空/中性] (用一句话概括理由)
+## 关键论据 (3条, 每条必须引用具体财务数据)
+## 操作建议: 方向 + 安全边际价位 + 持有周期
+## 信心指数: X/10
 
-不要废话, 直接给结论, 每个判断必须引用具体数据。
+语气要求: 沉稳、严谨、有时会泼冷水。经常提醒风险。200-350字。""",
+    },
+    {
+        "id": "contra",
+        "name": "逆向思维",
+        "emoji": "🔄",
+        "style": "agent-contra",
+        "tab_label": "🔄 逆向思维",
+        "desc": "人弃我取 · 别人恐惧我贪婪",
+        "system_prompt": """你是"逆向思维", 一位逆向投资专家, 专门在市场共识的反面寻找机会。
+你的核心信仰: 当所有人看多时风险最大, 当所有人恐慌时机会最好。
+
+你的分析框架 (必须严格遵循):
+- 重点关注: RSI 超买超卖、布林带极端位置、量价背离、市场情绪
+- 你最擅长: 找出市场可能忽视的反面逻辑
+- 你会主动唱反调: 如果技术面看多, 你找看空的理由; 反之亦然
+
+输出要求:
+## 立场: [看多/看空/中性] (必须给出与表面趋势相反或不同的视角)
+## 关键论据 (3条, 重点指出市场可能忽视的风险或机会)
+## 操作建议: 方向 + 逆向布局的价位 + 触发条件
+## 信心指数: X/10
+
+语气要求: 冷静、犀利、喜欢挑战共识。"大家都看好? 那我告诉你为什么该小心。" 200-350字。""",
+    },
+    {
+        "id": "swing",
+        "name": "短线游侠",
+        "emoji": "⚡",
+        "style": "agent-swing",
+        "tab_label": "⚡ 短线游侠",
+        "desc": "快进快出 · 波段为王",
+        "system_prompt": """你是"短线游侠", 一位日内/波段交易高手, 擅长捕捉1-5天的短期波动。
+你的核心信仰: 不预测方向, 只捕捉波动。关键是风险收益比和执行纪律。
+
+你的分析框架 (必须严格遵循):
+- 重点关注: 日K线形态、量比异动、支撑压力位精确计算、RSI/布林带位置
+- 你最看重: 精确的买卖点位和止损位
+- 你最不在乎: 长期基本面 (那是别人的事)
+
+输出要求:
+## 立场: [做多/做空/观望] (用一句话概括短线判断)
+## 关键论据 (3条, 必须精确到价格和百分比)
+## 操作建议: 入场价 / 止损价 / 止盈价 + 仓位比例 + 持有天数
+## 信心指数: X/10
+
+语气要求: 精准、干脆、数字说话。每句话都要有具体价位。200-350字。""",
+    },
+]
+
+JUDGE_SYSTEM_PROMPT = """你是"首席策略官", 负责主持这场交易员辩论会并做出最终裁决。
+
+你刚刚听取了4位不同风格交易员的分析:
+- 趋势猎手: 趋势跟踪派, 重技术面动量
+- 价值守卫: 价值投资派, 重基本面
+- 逆向思维: 逆向投资派, 专找市场盲点
+- 短线游侠: 波段交易派, 重短期买卖点
+
+你的任务:
+
+## 一、观点交锋总结
+用1-2段话总结4位交易员的核心分歧在哪, 谁和谁意见一致, 谁和谁针锋相对。
+
+## 二、综合评分
+从以下维度给出最终评分 (每项1-10分):
+| 维度 | 评分 | 依据 |
+|------|------|------|
+| 趋势强度 | | |
+| 量价配合 | | |
+| 基本面质量 | | |
+| 消息面催化 | | |
+| 风险收益比 | | |
+| **综合** | | |
+
+## 三、最终裁决
+1. **操作方向**: 强烈买入 / 买入 / 持有 / 减仓 / 强烈卖出
+2. **目标仓位**: 建议占总资金百分比
+3. **关键价位**: 止损 / 目标 / 加仓位
+4. **执行节奏**: 具体分批方案
+5. **时间维度**: 短线 / 波段 / 中线
+
+## 四、最大风险警示
+综合所有人意见, 最需要警惕的1-2个风险。
+
+你的裁决要有主见, 不是简单平均, 而是基于逻辑判断哪位交易员的论据更有说服力。
+如果多数人观点一致, 要特别重视逆向思维的警告。
 """
 
 
@@ -571,6 +717,70 @@ RSI(14): {rsi_val:.1f}
 
 请按照系统指令框架输出完整分析。
 """
+
+
+# =====================================================================
+# Agent 调用
+# =====================================================================
+def run_single_agent(client, agent, data_prompt, model):
+    """调用单个交易员 Agent, 返回文本结果"""
+    try:
+        response = client.models.generate_content(
+            model=model,
+            contents=data_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=agent["system_prompt"],
+                temperature=0.5,
+                max_output_tokens=1500,
+            ),
+        )
+        return response.text if response.text else "(该交易员未给出意见)"
+    except Exception as e:
+        return f"(调用失败: {e})"
+
+
+def run_judge(client, stock_name, data_prompt, agent_opinions, model):
+    """裁判综合所有意见给出最终裁决"""
+    opinions_text = ""
+    for agent, opinion in agent_opinions:
+        opinions_text += f"\n{'='*40}\n"
+        opinions_text += f"【{agent['emoji']} {agent['name']}】({agent['desc']})\n"
+        opinions_text += f"{opinion}\n"
+
+    judge_prompt = f"""
+以下是关于 {stock_name} 的数据:
+{data_prompt}
+
+{'='*50}
+以下是4位交易员的分析意见:
+{opinions_text}
+{'='*50}
+
+请作为首席策略官, 综合以上所有信息和观点, 给出你的最终裁决。
+"""
+    try:
+        response = client.models.generate_content_stream(
+            model=model,
+            contents=judge_prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=JUDGE_SYSTEM_PROMPT,
+                temperature=0.3,
+                max_output_tokens=3000,
+            ),
+        )
+        return response
+    except Exception as e:
+        return None
+
+
+def extract_stance(text):
+    """从 Agent 输出中提取立场标签"""
+    text_lower = text[:200]
+    if any(k in text_lower for k in ["看多", "做多", "买入", "强烈买入"]):
+        return "看多", "bullish"
+    elif any(k in text_lower for k in ["看空", "做空", "卖出", "减仓", "强烈卖出"]):
+        return "看空", "bearish"
+    return "中性", "neutral"
 
 
 # =====================================================================
@@ -776,26 +986,58 @@ def main():
 
     st.divider()
 
-    # ---- AI Analysis ----
-    st.markdown("### 🤖 AI 深度分析报告")
+    # ---- Multi-Agent Debate ----
+    st.markdown("### 🎭 交易员辩论会")
+    st.caption("4 位不同风格的交易员各抒己见，首席策略官综合裁决")
 
-    prompt = build_prompt(stock_name, ts_code, df, fina, business, news_text)
+    data_prompt = build_prompt(stock_name, ts_code, df, fina, business, news_text)
 
-    try:
-        response = gemini_client.models.generate_content_stream(
-            model=cfg["gemini_model"],
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                temperature=0.4,
-                max_output_tokens=4096,
-            ),
-        )
-        report = st.write_stream(
-            (chunk.text for chunk in response if chunk.text)
-        )
-    except Exception as e:
-        st.error(f"AI 分析失败: {e}")
+    # Phase 1: 各交易员发言
+    agent_opinions = []
+
+    with st.status("交易员辩论进行中...", expanded=True) as debate_status:
+        for agent in TRADER_AGENTS:
+            st.write(f"{agent['emoji']} {agent['name']}正在分析...")
+            opinion = run_single_agent(gemini_client, agent, data_prompt, cfg["gemini_model"])
+            agent_opinions.append((agent, opinion))
+            time.sleep(0.5)
+
+        st.write("🎯 首席策略官正在综合裁决...")
+        judge_stream = run_judge(gemini_client, stock_name, data_prompt, agent_opinions, cfg["gemini_model"])
+        debate_status.update(label="辩论完毕 ✅", state="complete", expanded=False)
+
+    # Display agent opinions in tabs
+    agent_tabs = st.tabs([a["tab_label"] for a in TRADER_AGENTS])
+
+    for i, (agent, opinion) in enumerate(agent_opinions):
+        with agent_tabs[i]:
+            stance_text, stance_class = extract_stance(opinion)
+            st.markdown(f"""
+            <div class="{agent['style']}">
+                <div class="agent-header">
+                    <span class="agent-emoji">{agent['emoji']}</span>
+                    <span>{agent['name']}<br><small style="font-weight:400;color:#8892b0">{agent['desc']}</small></span>
+                    <span class="agent-stance stance-{stance_class}">{stance_text}</span>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+            st.markdown(opinion)
+
+    # Phase 2: Judge verdict
+    st.divider()
+    st.markdown("""
+    <div class="verdict-title">🎯 首席策略官 · 最终裁决</div>
+    """, unsafe_allow_html=True)
+
+    if judge_stream:
+        try:
+            st.write_stream(
+                (chunk.text for chunk in judge_stream if chunk.text)
+            )
+        except Exception as e:
+            st.error(f"裁决生成失败: {e}")
+    else:
+        st.error("首席策略官调用失败")
 
     # ---- Financial summary ----
     with st.expander("📋 财务指标详情"):
@@ -815,6 +1057,13 @@ def main():
     if news_text and enable_search:
         with st.expander("🌐 联网搜索结果"):
             st.markdown(news_text)
+
+    # Debate raw data
+    with st.expander("📝 查看完整辩论记录"):
+        for agent, opinion in agent_opinions:
+            st.markdown(f"**{agent['emoji']} {agent['name']}**")
+            st.markdown(opinion)
+            st.divider()
 
 
 if __name__ == "__main__":
