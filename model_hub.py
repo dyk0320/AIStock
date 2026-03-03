@@ -17,11 +17,11 @@ def get_config():
                         "gemini-3-flash-preview"),
         "deepseek_key": st.secrets.get("DEEPSEEK_API_KEY", ""),
         "deepseek_model": st.secrets.get("DEEPSEEK_MODEL",
-                          "deepseek-reasoner"),
+                          "deepseek-chat"),
         "deepseek_base_url": st.secrets.get("DEEPSEEK_BASE_URL",
                              "https://api.deepseek.com"),
         "qwen_key": st.secrets.get("QWEN_API_KEY", ""),
-        "qwen_model": st.secrets.get("QWEN_MODEL", "qwen3-max"),
+        "qwen_model": st.secrets.get("QWEN_MODEL", "qwen3.5-plus"),
         "qwen_base_url": st.secrets.get("QWEN_BASE_URL",
             "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     }
@@ -114,7 +114,11 @@ class ModelHub:
                     txt = self._call_gemini(sys_prompt,user_prompt,temperature,max_tokens)
                     self.call_log.append(("Gemini",True)); return txt,"Gemini"
             except Exception as e:
+                import traceback
+                print(f"[ModelHub] {prov} FAILED: {type(e).__name__}: {e}")
+                traceback.print_exc()
                 last_err = e; self.call_log.append((prov,False)); continue
+        print(f"[ModelHub] ALL FAILED. last_err={last_err}")
         return f"(all models failed: {last_err})","None"
 
     def generate_stream(self, sys_prompt, user_prompt, temperature=0.3,
@@ -127,7 +131,15 @@ class ModelHub:
                     return self._stream_oai(self.qwen_client,self.cfg["qwen_model"],sys_prompt,user_prompt,temperature,max_tokens),"Qwen"
                 elif prov=="gemini" and self.gemini_client:
                     return self._stream_gemini(sys_prompt,user_prompt,temperature,max_tokens),"Gemini"
-            except Exception: continue
+            except Exception as e:
+                # ========== 加这三行 ==========
+                import traceback
+                print(f"[ModelHub stream] {prov} FAILED: {type(e).__name__}: {e}")
+                traceback.print_exc()
+                # ==============================
+                continue
+        # ========== 加这一行 ==========
+        print("[ModelHub stream] ALL FAILED")
         return None,"None"
 
     def search_news(self, stock_name, business):
