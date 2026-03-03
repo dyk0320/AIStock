@@ -25,7 +25,7 @@ st.set_page_config(
     page_title="A股智能分析系统",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 # =====================================================================
@@ -33,61 +33,123 @@ st.set_page_config(
 # =====================================================================
 st.markdown("""
 <style>
-    /* 主容器 */
+    /* ---- 基础 ---- */
     .block-container { padding-top: 1.5rem; max-width: 1200px; }
 
-    /* 指标卡片 */
+    /* ---- 指标网格 (自适应) ---- */
+    .metrics-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0.5rem;
+        margin-bottom: 0.8rem;
+    }
     .metric-card {
         background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
         border: 1px solid #2a2a4a;
         border-radius: 12px;
-        padding: 1.2rem;
+        padding: 1rem 0.6rem;
         text-align: center;
-        margin-bottom: 0.5rem;
     }
-    .metric-card .label { color: #8892b0; font-size: 0.8rem; margin-bottom: 0.3rem; }
-    .metric-card .value { font-size: 1.4rem; font-weight: 700; }
+    .metric-card .label { color: #8892b0; font-size: 0.78rem; margin-bottom: 0.2rem; }
+    .metric-card .value { font-size: 1.3rem; font-weight: 700; }
     .metric-card .up { color: #ef4444; }
     .metric-card .down { color: #22c55e; }
     .metric-card .neutral { color: #e2e8f0; }
 
-    /* 信号标签 */
+    /* ---- 关键价位网格 ---- */
+    .levels-grid {
+        display: grid;
+        grid-template-columns: repeat(5, 1fr);
+        gap: 0.4rem;
+        text-align: center;
+        margin: 0.5rem 0;
+    }
+    .level-item .level-label { color: #8892b0; font-size: 0.72rem; }
+    .level-item .level-val { font-weight: 700; font-size: 1.05rem; }
+    .level-item .lv-r { color: #ef4444; }
+    .level-item .lv-s { color: #22c55e; }
+    .level-item .lv-p { color: #94a3b8; }
+
+    /* ---- 信号标签 ---- */
+    .signal-wrap { display: flex; flex-wrap: wrap; gap: 0.3rem; align-items: center; }
     .signal-tag {
         display: inline-block;
-        padding: 0.25rem 0.75rem;
+        padding: 0.25rem 0.7rem;
         border-radius: 20px;
-        font-size: 0.8rem;
+        font-size: 0.78rem;
         font-weight: 600;
-        margin: 0.2rem;
+        white-space: nowrap;
     }
     .signal-bullish { background: rgba(239,68,68,0.15); color: #ef4444; border: 1px solid rgba(239,68,68,0.3); }
     .signal-bearish { background: rgba(34,197,94,0.15); color: #22c55e; border: 1px solid rgba(34,197,94,0.3); }
     .signal-neutral { background: rgba(234,179,8,0.15); color: #eab308; border: 1px solid rgba(234,179,8,0.3); }
 
-    /* 侧边栏标题 */
+    /* ---- 侧边栏 ---- */
     .sidebar-title {
-        font-size: 1.1rem;
-        font-weight: 700;
-        color: #e2e8f0;
-        padding-bottom: 0.5rem;
-        border-bottom: 2px solid #3b82f6;
-        margin-bottom: 1rem;
+        font-size: 1.1rem; font-weight: 700; color: #e2e8f0;
+        padding-bottom: 0.5rem; border-bottom: 2px solid #3b82f6; margin-bottom: 1rem;
     }
 
-    /* 分析报告区域 */
-    .report-container {
-        background: #0f172a;
-        border: 1px solid #1e293b;
-        border-radius: 12px;
-        padding: 1.5rem;
-        line-height: 1.8;
-    }
-
-    /* 隐藏 Streamlit 默认元素 */
+    /* ---- 隐藏默认元素 ---- */
     #MainMenu {visibility: hidden;}
     footer {visibility: hidden;}
     header {visibility: hidden;}
+
+    /* ---- 移动端首页卡片 ---- */
+    .landing-grid {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 1rem;
+    }
+    .landing-card {
+        background: #1e293b; border-radius: 12px; padding: 1.2rem;
+        text-align: center;
+    }
+    .landing-card h4 { margin: 0.4rem 0; font-size: 1rem; }
+    .landing-card p { color: #94a3b8; font-size: 0.85rem; margin: 0; }
+
+    /* ============ 移动端适配 (≤768px) ============ */
+    @media (max-width: 768px) {
+        .block-container { padding: 0.8rem 0.6rem !important; }
+
+        /* 指标: 3+2 布局 */
+        .metrics-grid { grid-template-columns: repeat(3, 1fr); gap: 0.4rem; }
+        .metric-card { padding: 0.7rem 0.3rem; border-radius: 8px; }
+        .metric-card .label { font-size: 0.68rem; }
+        .metric-card .value { font-size: 1.1rem; }
+
+        /* 价位: 3+2 */
+        .levels-grid { grid-template-columns: repeat(3, 1fr); gap: 0.3rem; }
+        .level-item .level-label { font-size: 0.65rem; }
+        .level-item .level-val { font-size: 0.92rem; }
+
+        /* 信号标签 */
+        .signal-tag { font-size: 0.7rem; padding: 0.2rem 0.55rem; }
+
+        /* 首页卡片竖排 */
+        .landing-grid { grid-template-columns: 1fr; gap: 0.6rem; }
+        .landing-card { padding: 0.8rem; }
+
+        /* 标题缩小 */
+        h2 { font-size: 1.2rem !important; }
+        h3 { font-size: 1.05rem !important; }
+
+        /* 隐藏 Plotly 模式栏 */
+        .modebar { display: none !important; }
+
+        /* Tab 字号 */
+        .stTabs [data-baseweb="tab"] { font-size: 0.8rem !important; padding: 0.4rem 0.6rem !important; }
+    }
+
+    /* ============ 超小屏 (≤480px) ============ */
+    @media (max-width: 480px) {
+        .metrics-grid { grid-template-columns: repeat(2, 1fr); }
+        .metric-card .value { font-size: 1rem; }
+        .levels-grid { grid-template-columns: repeat(2, 1fr); }
+    }
 </style>
+
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 """, unsafe_allow_html=True)
 
 
@@ -347,8 +409,8 @@ def build_main_chart(df):
     ), row=2, col=1)
 
     fig.update_layout(
-        height=520,
-        margin=dict(l=0, r=0, t=30, b=0),
+        height=480,
+        margin=dict(l=5, r=5, t=30, b=5),
         plot_bgcolor="#0f172a",
         paper_bgcolor="#0f172a",
         font=dict(color="#94a3b8", size=11),
@@ -358,6 +420,7 @@ def build_main_chart(df):
         yaxis2=dict(gridcolor="#1e293b", title=""),
         xaxis=dict(gridcolor="#1e293b"),
         xaxis2=dict(gridcolor="#1e293b"),
+        dragmode="pan",
     )
 
     return fig
@@ -383,12 +446,13 @@ def build_macd_chart(df):
 
     fig.update_layout(
         height=220,
-        margin=dict(l=0, r=0, t=10, b=0),
+        margin=dict(l=5, r=5, t=10, b=5),
         plot_bgcolor="#0f172a", paper_bgcolor="#0f172a",
         font=dict(color="#94a3b8", size=10),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0.5, xanchor="center", font_size=10),
         yaxis=dict(gridcolor="#1e293b"),
         xaxis=dict(gridcolor="#1e293b"),
+        dragmode="pan",
     )
     return fig
 
@@ -411,12 +475,13 @@ def build_rsi_chart(df):
 
     fig.update_layout(
         height=200,
-        margin=dict(l=0, r=0, t=10, b=0),
+        margin=dict(l=5, r=5, t=10, b=5),
         plot_bgcolor="#0f172a", paper_bgcolor="#0f172a",
         font=dict(color="#94a3b8", size=10),
         yaxis=dict(gridcolor="#1e293b", range=[0, 100]),
         xaxis=dict(gridcolor="#1e293b"),
         showlegend=False,
+        dragmode="pan",
     )
     return fig
 
@@ -577,18 +642,24 @@ def main():
     if not analyze_btn or not stock_code:
         # Landing page
         st.markdown("## 📊 A股智能分析系统")
-        st.markdown("在左侧输入股票代码，点击 **开始分析** 获取 AI 深度研报。")
+        st.markdown("在左侧菜单输入股票代码，点击 **开始分析** 获取 AI 深度研报。<br><small>📱 手机端请点左上角 **>** 打开菜单</small>", unsafe_allow_html=True)
 
-        col1, col2, col3 = st.columns(3)
-        with col1:
-            st.markdown("#### 🔍 技术面分析")
-            st.markdown("MA / MACD / RSI / 布林带\n\n支撑压力位 · 量价背离检测")
-        with col2:
-            st.markdown("#### 🌐 实时消息面")
-            st.markdown("Gemini + Google Search\n\n政策 · 公告 · 行业 · 机构动向")
-        with col3:
-            st.markdown("#### 🤖 AI 深度推理")
-            st.markdown("多空评分 · 趋势判断\n\n交易策略 · 风险提示")
+        st.markdown("""
+        <div class="landing-grid">
+            <div class="landing-card">
+                <h4>🔍 技术面分析</h4>
+                <p>MA / MACD / RSI / 布林带<br>支撑压力位 · 量价背离</p>
+            </div>
+            <div class="landing-card">
+                <h4>🌐 实时消息面</h4>
+                <p>Gemini + Google Search<br>政策 · 公告 · 行业动向</p>
+            </div>
+            <div class="landing-card">
+                <h4>🤖 AI 深度推理</h4>
+                <p>多空评分 · 趋势判断<br>交易策略 · 风险提示</p>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
         return
 
     # Validate
@@ -640,68 +711,71 @@ def main():
 
     st.markdown(f"## {stock_name}  `{ts_code}`")
 
-    # Metric cards
-    c1, c2, c3, c4, c5 = st.columns(5)
-    with c1:
-        st.markdown(f"""<div class="metric-card">
+    # Metric cards (CSS grid, auto-responsive)
+    rsi_val = latest.get("RSI", 50)
+    rsi_class = "up" if pd.notna(rsi_val) and rsi_val > 70 else ("down" if pd.notna(rsi_val) and rsi_val < 30 else "neutral")
+    vol_ratio = latest.get("VOL_RATIO", 1.0)
+    vr_class = "up" if pd.notna(vol_ratio) and vol_ratio > 1.5 else ("down" if pd.notna(vol_ratio) and vol_ratio < 0.5 else "neutral")
+
+    st.markdown(f"""
+    <div class="metrics-grid">
+        <div class="metric-card">
             <div class="label">最新价</div>
             <div class="value {change_color}">{latest['close']:.2f}</div>
-        </div>""", unsafe_allow_html=True)
-    with c2:
-        st.markdown(f"""<div class="metric-card">
+        </div>
+        <div class="metric-card">
             <div class="label">涨跌幅</div>
             <div class="value {change_color}">{change_pct:+.2f}%</div>
-        </div>""", unsafe_allow_html=True)
-    with c3:
-        rsi_val = latest.get("RSI", 50)
-        rsi_class = "up" if pd.notna(rsi_val) and rsi_val > 70 else ("down" if pd.notna(rsi_val) and rsi_val < 30 else "neutral")
-        st.markdown(f"""<div class="metric-card">
+        </div>
+        <div class="metric-card">
             <div class="label">RSI(14)</div>
             <div class="value {rsi_class}">{rsi_val:.1f}</div>
-        </div>""", unsafe_allow_html=True)
-    with c4:
-        vol_ratio = latest.get("VOL_RATIO", 1.0)
-        vr_class = "up" if pd.notna(vol_ratio) and vol_ratio > 1.5 else ("down" if pd.notna(vol_ratio) and vol_ratio < 0.5 else "neutral")
-        st.markdown(f"""<div class="metric-card">
+        </div>
+        <div class="metric-card">
             <div class="label">量比</div>
             <div class="value {vr_class}">{vol_ratio:.2f}</div>
-        </div>""", unsafe_allow_html=True)
-    with c5:
-        st.markdown(f"""<div class="metric-card">
+        </div>
+        <div class="metric-card">
             <div class="label">成交额</div>
             <div class="value neutral">{latest['amount']/10000:.0f}万</div>
-        </div>""", unsafe_allow_html=True)
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
     # Signal tags
     if signals:
-        tags_html = ""
+        tags_html = '<div class="signal-wrap"><strong style="margin-right:0.4rem">技术信号</strong>'
         for text, kind in signals:
-            css = f"signal-{kind}"
-            tags_html += f'<span class="signal-tag {css}">{text}</span>'
-        st.markdown(f"**技术信号** {tags_html}", unsafe_allow_html=True)
+            tags_html += f'<span class="signal-tag signal-{kind}">{text}</span>'
+        tags_html += '</div>'
+        st.markdown(tags_html, unsafe_allow_html=True)
 
     st.divider()
 
     # ---- Charts ----
     tab_main, tab_macd, tab_rsi = st.tabs(["📈 K线 + 均线 + 布林带", "📊 MACD", "📉 RSI"])
 
+    _chart_config = {"displayModeBar": False, "scrollZoom": True}
+
     with tab_main:
-        st.plotly_chart(build_main_chart(df), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(build_main_chart(df), use_container_width=True, config=_chart_config)
     with tab_macd:
-        st.plotly_chart(build_macd_chart(df), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(build_macd_chart(df), use_container_width=True, config=_chart_config)
     with tab_rsi:
-        st.plotly_chart(build_rsi_chart(df), use_container_width=True, config={"displayModeBar": False})
+        st.plotly_chart(build_rsi_chart(df), use_container_width=True, config=_chart_config)
 
     # Support/Resistance
     if levels:
-        st.markdown("**关键价位**")
-        lc = st.columns(len(levels))
-        for i, (label, val) in enumerate(levels.items()):
-            with lc[i]:
-                color = "#ef4444" if "压力" in label else ("#22c55e" if "支撑" in label else "#94a3b8")
-                st.markdown(f"<div style='text-align:center'><span style='color:#8892b0;font-size:0.75rem'>{label}</span><br>"
-                            f"<span style='color:{color};font-weight:700;font-size:1.1rem'>{val}</span></div>",
-                            unsafe_allow_html=True)
+        items_html = ""
+        for label, val in levels.items():
+            if "压力" in label:
+                css = "lv-r"
+            elif "支撑" in label:
+                css = "lv-s"
+            else:
+                css = "lv-p"
+            items_html += f'<div class="level-item"><div class="level-label">{label}</div><div class="level-val {css}">{val}</div></div>'
+        st.markdown(f'<div style="margin-top:0.2rem"><strong>关键价位</strong></div><div class="levels-grid">{items_html}</div>', unsafe_allow_html=True)
 
     st.divider()
 
@@ -732,10 +806,10 @@ def main():
             labels = {"roe": "ROE (%)", "grossprofit_margin": "毛利率 (%)",
                       "netprofit_yoy": "净利润同比 (%)", "revenue_yoy": "营收同比 (%)",
                       "debt_to_assets": "资产负债率 (%)", "eps": "每股收益 (元)"}
-            cols = st.columns(3)
+            cols = st.columns(2)
             for i, (k, label) in enumerate(labels.items()):
                 v = fina.get(k)
-                with cols[i % 3]:
+                with cols[i % 2]:
                     val_str = f"{v:.2f}" if v is not None and str(v) != "nan" else "N/A"
                     st.metric(label, val_str)
         else:
