@@ -1108,6 +1108,7 @@ def run_single_agent(hub, agent, data_prompt):
         temperature=0.5, max_tokens=1500,
         priority=("deepseek", "qwen", "gemini"),
     )
+    print(f"[{agent['name']}] provider={provider}, text_len={len(text) if text else 0}, text_preview={repr(text[:100]) if text else 'None'}")
     if not text or text.startswith("(all"):
         return "(该交易员未给出意见)", "None"
     return text, provider
