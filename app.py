@@ -1180,6 +1180,16 @@ def search_news(client, stock_name, business, model):
 # 模块11: 主界面
 # =====================================================================
 def main():
+    # ---- Init clients (cached) ----
+    _init_ok = False
+    _init_err = ""
+    try:
+        hub, pro, cfg = init_clients()
+        _init_ok = True
+    except Exception as e:
+        hub, pro, cfg = None, None, None
+        _init_err = str(e)
+
     # ---- Sidebar ----
     with st.sidebar:
         st.markdown('<div class="sidebar-title">⚙️ 分析设置</div>', unsafe_allow_html=True)
@@ -1187,10 +1197,40 @@ def main():
         enable_search = st.toggle("联网搜索", value=True)
         enable_akshare = st.toggle("增强数据(AKShare)", value=True, help="资金流向/北向/融资融券/涨跌停")
         st.divider()
+
+        # ---- Model status (always visible) ----
+        st.markdown("**🤖 模型状态**")
+        if _init_ok and hub:
+            providers = hub.available_providers()
+            init_errors = getattr(hub, "init_errors", {})
+            for p in providers:
+                st.caption(f"🟢 {p}")
+            for name, err in init_errors.items():
+                if name not in providers:
+                    st.caption(f"🔴 {name}: {str(err)[:60]}")
+            if len(providers) > 1:
+                st.caption(f"Fallback: {' → '.join(providers)}")
+            elif len(providers) == 0:
+                st.error("⚠️ 无可用模型!")
+
+            # Diagnostic button - always visible
+            if hasattr(hub, "diagnose"):
+                if st.button("🔧 诊断模型连接"):
+                    with st.spinner("测试中..."):
+                        diag = hub.diagnose()
+                    for name, res in diag.items():
+                        if res["status"] == "OK":
+                            st.success(f"✅ {name}: {res['response']}")
+                        elif res["status"] == "NOT_INIT":
+                            st.warning(f"⚪ {name}: {res['error'][:80]}")
+                        else:
+                            st.error(f"❌ {name}: {res['error'][:120]}")
+        else:
+            st.error(f"初始化失败: {_init_err if not _init_ok else '未知'}")
+
+        st.divider()
         st.caption("⚠️ 分析仅供参考，不构成投资建议")
         st.caption(f"📅 {datetime.datetime.now().strftime('%Y-%m-%d %H:%M')}")
-        st.divider()
-        st.markdown("**🤖 模型**")
 
     # ---- Main input ----
     st.markdown("## 📈 A股智能分析系统 v4.2")
@@ -1216,42 +1256,11 @@ def main():
         st.error("请输入有效的6位股票代码")
         return
 
-    try:
-        hub, pro, cfg = init_clients()
-    except Exception as e:
-        st.error(f"初始化失败: {e}")
+    if not _init_ok or hub is None:
+        st.error("模型初始化失败，请检查 API Key 配置")
         return
 
     ts_code = build_ts_code(stock_code)
-
-    # Show available providers + init errors in sidebar
-    providers = hub.available_providers()
-    init_errors = getattr(hub, "init_errors", {})
-    with st.sidebar:
-        for p in providers:
-            st.caption(f"🟢 {p}")
-        for name, err in init_errors.items():
-            if name not in providers:
-                st.caption(f"🔴 {name}: {str(err)[:60]}")
-        if len(providers) > 1:
-            st.caption(f"Fallback: {' → '.join(providers)}")
-        elif len(providers) == 0:
-            st.error("⚠️ 无可用模型! 请检查API Key配置")
-            for name, err in init_errors.items():
-                st.error(f"{name}: {err}")
-            return
-
-        if hasattr(hub, "diagnose"):
-            if st.button("🔧 诊断模型连接"):
-                with st.spinner("测试中..."):
-                    diag = hub.diagnose()
-                for name, res in diag.items():
-                    if res["status"] == "OK":
-                        st.success(f"✅ {name}: {res['response']}")
-                    elif res["status"] == "NOT_INIT":
-                        st.warning(f"⚪ {name}: {res['error'][:80]}")
-                    else:
-                        st.error(f"❌ {name}: {res['error'][:120]}")
 
     # ==================== 数据获取 ====================
     with st.status("正在获取数据...", expanded=True) as status:
@@ -1439,10 +1448,15 @@ def main():
         for agent in TRADER_AGENTS:
             st.write(f"{agent['emoji']} {agent['name']}正在分析...")
             opinion, prov = run_single_agent(hub, agent, data_prompt)
+            if prov == "None":
+                st.write(f"  ⚠️ {agent['name']}失败: {opinion[:120]}")
+            else:
+                st.write(f"  ✅ {agent['name']} → {prov}")
             agent_opinions.append((agent, opinion, prov))
             time.sleep(0.3)
         st.write("🎯 首席策略官裁决中...")
         judge_stream, judge_prov = run_judge(hub, stock_name, data_prompt, agent_opinions)
+        st.write(f"  裁判模型: {judge_prov}")
         ds.update(label="辩论完毕 ✅", state="complete", expanded=False)
 
     # Agent tabs
