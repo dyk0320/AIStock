@@ -150,6 +150,41 @@ st.markdown("""
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 """, unsafe_allow_html=True)
 
+# Floating sidebar toggle button - inject into parent document (mobile only)
+import streamlit.components.v1 as components
+components.html("""
+<script>
+(function() {
+    var pd = window.parent.document;
+    if (pd.getElementById('sidebar-fab')) return;
+    var btn = pd.createElement('div');
+    btn.id = 'sidebar-fab';
+    btn.innerHTML = '⚙️';
+    btn.style.cssText = 'position:fixed;bottom:24px;left:16px;z-index:999999;'
+        + 'width:48px;height:48px;border-radius:50%;'
+        + 'background:linear-gradient(135deg,#3b82f6,#6366f1);'
+        + 'border:2px solid rgba(255,255,255,0.2);'
+        + 'color:white;font-size:1.3rem;cursor:pointer;'
+        + 'display:flex;align-items:center;justify-content:center;'
+        + 'box-shadow:0 4px 15px rgba(59,130,246,0.4);'
+        + 'transition:transform 0.2s;user-select:none;';
+    btn.onmousedown = function(){ btn.style.transform='scale(0.9)'; };
+    btn.onmouseup = function(){ btn.style.transform='scale(1)'; };
+    btn.onclick = function() {
+        var c = pd.querySelector('[data-testid="collapsedControl"]');
+        if (c) { c.click(); return; }
+        var x = pd.querySelector('[data-testid="stSidebarCollapseButton"] button');
+        if (x) { x.click(); return; }
+    };
+    pd.body.appendChild(btn);
+    // Auto-hide on desktop
+    var mq = window.parent.matchMedia('(min-width: 769px)');
+    function check(e) { btn.style.display = e.matches ? 'none' : 'flex'; }
+    check(mq); mq.addEventListener('change', check);
+})();
+</script>
+""", height=0)
+
 
 # =====================================================================
 # 配置 & 初始化
