@@ -1108,9 +1108,10 @@ def run_single_agent(hub, agent, data_prompt):
         temperature=0.5, max_tokens=1500,
         priority=("deepseek", "qwen", "gemini"),
     )
-    print(f"[{agent['name']}] provider={provider}, text_len={len(text) if text else 0}, text_preview={repr(text[:100]) if text else 'None'}")
-    if not text or text.startswith("(all"):
-        return "(该交易员未给出意见)", "None"
+    if not text:
+        return "(该交易员未给出意见: 模型返回空内容)", "None"
+    if text.startswith("[ALL FAILED]"):
+        return text, "None"  # show actual error chain
     return text, provider
 
 def run_judge(hub, stock_name, data_prompt, agent_opinions):
@@ -1223,15 +1224,34 @@ def main():
 
     ts_code = build_ts_code(stock_code)
 
-    # Show available providers in sidebar
+    # Show available providers + init errors in sidebar
     providers = hub.available_providers()
     with st.sidebar:
         for p in providers:
             st.caption(f"🟢 {p}")
+        # Show init errors for providers that failed
+        for name, err in hub.init_errors.items():
+            if name not in providers:
+                st.caption(f"🔴 {name}: {err[:60]}")
         if len(providers) > 1:
             st.caption(f"Fallback: {' → '.join(providers)}")
         elif len(providers) == 0:
-            st.error("无可用模型!")
+            st.error("⚠️ 无可用模型! 请检查API Key配置")
+            for name, err in hub.init_errors.items():
+                st.error(f"{name}: {err}")
+            return
+
+        # Diagnostic button
+        if st.button("🔧 诊断模型连接"):
+            with st.spinner("测试中..."):
+                diag = hub.diagnose()
+            for name, res in diag.items():
+                if res["status"] == "OK":
+                    st.success(f"✅ {name}: {res['response']}")
+                elif res["status"] == "NOT_INIT":
+                    st.warning(f"⚪ {name}: {res['error'][:80]}")
+                else:
+                    st.error(f"❌ {name}: {res['error'][:120]}")
 
     # ==================== 数据获取 ====================
     with st.status("正在获取数据...", expanded=True) as status:
@@ -1437,16 +1457,21 @@ def main():
                 <span class="agent-stance stance-{stance_class}">{stance_text}</span>
                 <span style="background:#2a2a4a;padding:2px 8px;border-radius:8px;font-size:0.7rem;color:#8892b0;margin-left:auto">{prov}</span>
             </div></div>""", unsafe_allow_html=True)
-            st.markdown(opinion)
+            if opinion.startswith("[ALL FAILED]"):
+                st.error(f"⚠️ 模型调用失败:\n{opinion}")
+            else:
+                st.markdown(opinion)
 
     # Judge verdict
     st.divider()
     st.markdown('<div class="verdict-title">🎯 首席策略官 · 最终裁决 <span style="background:#2a2a4a;padding:2px 8px;border-radius:8px;font-size:0.7rem;color:#8892b0">' + judge_prov + '</span></div>', unsafe_allow_html=True)
     if judge_stream:
         try:
-            st.write_stream(judge_stream)
+            full_text = st.write_stream(judge_stream)
+            if full_text and full_text.startswith("[ALL FAILED]"):
+                st.error(f"⚠️ 裁决模型调用失败: {full_text}")
         except Exception as e:
-            st.error(f"裁决失败: {e}")
+            st.error(f"裁决失败: {type(e).__name__}: {e}")
     else:
         st.error("首席策略官调用失败")
 
