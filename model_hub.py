@@ -29,6 +29,7 @@ def get_config():
         "qwen_model": st.secrets.get("QWEN_MODEL", "qwen-plus"),
         "qwen_base_url": st.secrets.get("QWEN_BASE_URL",
             "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+        "realtime_token": st.secrets.get("REALTIME_TOKEN", ""),
     }
 
 
@@ -67,7 +68,8 @@ class ModelHub:
             try:
                 self.deepseek_client = OpenAI(
                     api_key=c["deepseek_key"],
-                    base_url=c["deepseek_base_url"])
+                    base_url=c["deepseek_base_url"],
+                    timeout=60.0)
             except Exception as e:
                 self.init_errors["DeepSeek"] = f"Client init failed: {e}"
 
@@ -82,7 +84,8 @@ class ModelHub:
             try:
                 self.qwen_client = OpenAI(
                     api_key=c["qwen_key"],
-                    base_url=c["qwen_base_url"])
+                    base_url=c["qwen_base_url"],
+                    timeout=60.0)
             except Exception as e:
                 self.init_errors["Qwen"] = f"Client init failed: {e}"
 
