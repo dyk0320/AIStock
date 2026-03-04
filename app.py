@@ -1226,32 +1226,32 @@ def main():
 
     # Show available providers + init errors in sidebar
     providers = hub.available_providers()
+    init_errors = getattr(hub, "init_errors", {})
     with st.sidebar:
         for p in providers:
             st.caption(f"🟢 {p}")
-        # Show init errors for providers that failed
-        for name, err in hub.init_errors.items():
+        for name, err in init_errors.items():
             if name not in providers:
-                st.caption(f"🔴 {name}: {err[:60]}")
+                st.caption(f"🔴 {name}: {str(err)[:60]}")
         if len(providers) > 1:
             st.caption(f"Fallback: {' → '.join(providers)}")
         elif len(providers) == 0:
             st.error("⚠️ 无可用模型! 请检查API Key配置")
-            for name, err in hub.init_errors.items():
+            for name, err in init_errors.items():
                 st.error(f"{name}: {err}")
             return
 
-        # Diagnostic button
-        if st.button("🔧 诊断模型连接"):
-            with st.spinner("测试中..."):
-                diag = hub.diagnose()
-            for name, res in diag.items():
-                if res["status"] == "OK":
-                    st.success(f"✅ {name}: {res['response']}")
-                elif res["status"] == "NOT_INIT":
-                    st.warning(f"⚪ {name}: {res['error'][:80]}")
-                else:
-                    st.error(f"❌ {name}: {res['error'][:120]}")
+        if hasattr(hub, "diagnose"):
+            if st.button("🔧 诊断模型连接"):
+                with st.spinner("测试中..."):
+                    diag = hub.diagnose()
+                for name, res in diag.items():
+                    if res["status"] == "OK":
+                        st.success(f"✅ {name}: {res['response']}")
+                    elif res["status"] == "NOT_INIT":
+                        st.warning(f"⚪ {name}: {res['error'][:80]}")
+                    else:
+                        st.error(f"❌ {name}: {res['error'][:120]}")
 
     # ==================== 数据获取 ====================
     with st.status("正在获取数据...", expanded=True) as status:
