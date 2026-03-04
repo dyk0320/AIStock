@@ -488,34 +488,119 @@ INDEX_MAP = {
     "399006.SZ": "创业板指",
 }
 
-# Realtime index codes for sanhulianghua API
+# Realtime index codes for sanhulianghua API (may not support indices)
 REALTIME_INDEX_MAP = {
-    "上证指数": "000001.XSHG",
-    "深证成指": "399001.XSHE",
-    "创业板指": "399006.XSHE",
+    "上证指数": "000001",
+    "深证成指": "399001",
+    "创业板指": "399006",
 }
 
 
 @st.cache_data(ttl=60)
 def fetch_realtime_indices(token: str) -> dict:
-    """Fetch real-time data for major indices via sanhulianghua API.
+    """Fetch real-time index data.
+    Strategy: AKShare (东方财富实时) first, sanhulianghua API as fallback.
     Returns {name: {price, change_pct, ...}} or {name: {error: ...}}
     """
+    results = {"_meta": {}}
+
+    # --- Method 1: AKShare real-time index spot ---
+    try:
+        import akshare as ak
+        # Try EastMoney source first, then Sina
+        df = None
+        for fetch_fn in [ak.stock_zh_index_spot_em, ak.stock_zh_index_spot_sina]:
+            try:
+                df = fetch_fn()
+                if df is not None and not df.empty:
+                    break
+            except Exception:
+                continue
+        if df is not None and not df.empty:
+            target_map = {"上证指数": "上证指数", "深证成指": "深证成指", "创业板指": "创业板指"}
+            name_col = None
+            for c in ["名称", "指数名称"]:
+                if c in df.columns:
+                    name_col = c
+                    break
+            if name_col:
+                for display_name, search_name in target_map.items():
+                    row = df[df[name_col].str.contains(search_name, na=False)]
+                    if not row.empty:
+                        r = row.iloc[0]
+                        price = float(r.get("最新价", 0) or 0)
+                        chg_pct = float(r.get("涨跌幅", 0) or 0)
+                        if price > 0:
+                            results[display_name] = {
+                                "price": round(price, 3),
+                                "change_pct": round(chg_pct, 3),
+                                "open": round(float(r.get("今开", 0) or 0), 3),
+                                "high": round(float(r.get("最高", 0) or 0), 3),
+                                "low": round(float(r.get("最低", 0) or 0), 3),
+                                "prev_close": round(float(r.get("昨收", 0) or 0), 3),
+                                "amplitude": round(float(r.get("振幅", 0) or 0), 3),
+                                "volume": int(float(r.get("成交量", 0) or 0)),
+                                "amount": float(r.get("成交额", 0) or 0),
+                                "time": datetime.datetime.now().strftime("%H:%M"),
+                                "source": "akshare",
+                            }
+            # Compute multi-day changes from AKShare daily index if we got spot data
+            for display_name in list(results.keys()):
+                if display_name.startswith("_"):
+                    continue
+                if "source" not in results[display_name]:
+                    continue
+                code_map = {"上证指数": "sh000001", "深证成指": "sz399001", "创业板指": "sz399006"}
+                ak_code = code_map.get(display_name)
+                if ak_code:
+                    try:
+                        hist = ak.stock_zh_index_daily(symbol=ak_code)
+                        if hist is not None and not hist.empty:
+                            hist = hist.sort_values("date").reset_index(drop=True)
+                            close_now = results[display_name]["price"]
+                            for days, key in [(3, "chg_3d"), (5, "chg_5d"), (10, "chg_10d"),
+                                              (20, "chg_20d"), (60, "chg_60d")]:
+                                if len(hist) >= days + 1:
+                                    old_close = float(hist.iloc[-(days+1)]["close"])
+                                    if old_close > 0:
+                                        results[display_name][key] = round(
+                                            (close_now / old_close - 1) * 100, 3)
+                    except Exception:
+                        pass
+
+            got_count = sum(1 for k, v in results.items()
+                          if k != "_meta" and isinstance(v, dict) and v.get("price"))
+            if got_count > 0:
+                results["_meta"]["source"] = "akshare"
+                return results
+    except Exception as e:
+        results["_meta"]["akshare_error"] = f"{type(e).__name__}: {str(e)[:80]}"
+
+    # --- Method 2: sanhulianghua API fallback (might not support indices) ---
     if not token:
-        return {}
-    results = {}
+        results["_meta"]["error"] = "REALTIME_TOKEN not set & AKShare failed"
+        return results
+
     for name, code in REALTIME_INDEX_MAP.items():
+        if name in results and isinstance(results[name], dict) and results[name].get("price"):
+            continue  # already got from AKShare
         try:
             url = (f"http://www.sanhulianghua.com:2008/v1/hsa_fenshi"
                    f"?token={token}&code={code}&all=1&simple=1")
             resp = requests.get(url, timeout=8)
             raw = resp.json()
-            if raw.get("ret") != 200:
-                results[name] = {"error": f"ret={raw.get('ret')}"}
+            ret = raw.get("ret")
+            if ret != 200:
+                results[name] = {"error": f"API ret={ret}, msg={raw.get('msg', '')}"}
                 continue
             data_list = raw.get("data", [])
             if not data_list:
-                results[name] = {"error": "no data"}
+                results[name] = {"error": "API data empty"}
+                continue
+            # Verify it's actually the index, not a stock with same code
+            api_name = raw.get("name", "")
+            if name[:2] not in api_name and "指数" not in api_name:
+                results[name] = {"error": f"API returned '{api_name}', not index"}
                 continue
 
             tick = data_list[-1]
@@ -538,9 +623,10 @@ def fetch_realtime_indices(token: str) -> dict:
                 "chg_20d": pct(tick.get("20RiZhangFu", 0)),
                 "chg_60d": pct(tick.get("60RiZhangFu", 0)),
                 "time": tick.get("ShiJian", ""),
+                "source": "sanhulianghua",
             }
         except Exception as e:
-            results[name] = {"error": str(e)[:80]}
+            results[name] = {"error": f"{type(e).__name__}: {str(e)[:80]}"}
     return results
 
 
@@ -1736,6 +1822,15 @@ def main():
         if enable_realtime:
             st.write("  ⚡ 实时指数数据...")
             rt_indices = fetch_realtime_indices(cfg.get("realtime_token", ""))
+            # Show any index fetch errors
+            for idx_name, idx_data in rt_indices.items():
+                if idx_name == "_meta":
+                    if idx_data.get("error"):
+                        st.write(f"  ⚠️ {idx_data['error']}")
+                elif isinstance(idx_data, dict) and "error" in idx_data:
+                    st.write(f"  ⚠️ {idx_name}: {idx_data['error']}")
+                elif isinstance(idx_data, dict) and idx_data.get("price"):
+                    st.write(f"  ✅ {idx_name}: {idx_data['price']:.3f} ({idx_data['change_pct']:+.3f}%)")
         mkt_ctx = MarketContext.analyze_indices(pro, rt_indices=rt_indices)
         sector_ctx = MarketContext.analyze_sector(pro, ts_code)
         market_text = MarketContext.format_text(mkt_ctx, sector_ctx)
@@ -1745,8 +1840,11 @@ def main():
         if enable_search:
             st.write("🌐 联网搜索 (个股消息)...")
             news_text = hub.search_news(stock_name, business)
-            st.write("🌍 联网搜索 (国际宏观)...")
-            macro_text = hub.search_macro()
+            if hasattr(hub, "search_macro"):
+                st.write("🌍 联网搜索 (国际宏观)...")
+                macro_text = hub.search_macro()
+            else:
+                st.write("⚠️ search_macro 不可用, 请更新 model_hub.py 并 Reboot")
 
         status.update(label="数据准备完毕 ✅", state="complete", expanded=False)
 
@@ -1811,13 +1909,14 @@ def main():
 
     st.markdown("**🌍 大盘环境**")
     if mkt_ctx.get("is_realtime"):
-        # Get time from any index that has it
         _idx_time = ""
         for _d in mkt_ctx.get("indices", {}).values():
             if isinstance(_d, dict) and _d.get("time"):
                 _idx_time = _d["time"]; break
         if _idx_time:
             st.caption(f"⚡ {_idx_time} 实时")
+    else:
+        st.caption("📊 收盘数据 (实时获取失败或已关闭)")
     idx_items = [(n, d) for n, d in mkt_ctx.get("indices", {}).items() if isinstance(d, dict)]
     if idx_items:
         idx_cols = st.columns(len(idx_items))
