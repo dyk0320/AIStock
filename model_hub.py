@@ -237,6 +237,40 @@ class ModelHub:
         except Exception as e:
             return f'(联网搜索异常: {type(e).__name__}: {e})'
 
+    def search_macro(self):
+        """Search for international macro environment affecting A-shares."""
+        prompt = """搜索今日影响A股的国际宏观环境, 请覆盖:
+1. 隔夜美股三大指数(道琼斯/标普500/纳斯达克)涨跌及原因
+2. 美联储最新政策信号/美债收益率/美元指数变化
+3. 中美关系/关税政策/贸易摩擦最新动态
+4. 地缘政治风险(中东/俄乌/台海等)
+5. 全球重大经济数据(非农/CPI/PMI等近期发布的)
+6. 亚太市场(港股/日经/韩国)今日表现
+每条1-2句, 标注时间, 没有的标"暂无重大变化"。重点关注对A股的传导影响。"""
+        if not self.gemini_client:
+            return ('(宏观搜索不可用: ' +
+                    self.init_errors.get("Gemini", "Gemini未配置") + ')')
+        try:
+            r = self.gemini_client.models.generate_content(
+                model=self.cfg['gemini_model'], contents=prompt,
+                config=types.GenerateContentConfig(
+                    tools=[types.Tool(google_search=types.GoogleSearch())],
+                    temperature=0.2, max_output_tokens=2048))
+            text = r.text if r.text else ''
+            sources = []
+            try:
+                meta = r.candidates[0].grounding_metadata
+                if meta and meta.grounding_chunks:
+                    for ch in meta.grounding_chunks[:5]:
+                        if hasattr(ch, 'web') and ch.web:
+                            sources.append('- ' + ch.web.title)
+            except Exception:
+                pass
+            src = '\n'.join(sources) if sources else '(无明确来源)'
+            return f'【国际宏观环境】\n{text}\n\n来源:\n{src}'
+        except Exception as e:
+            return f'(宏观搜索异常: {type(e).__name__}: {e})'
+
     # ----- Diagnostic test -----
     def diagnose(self):
         """Test each provider with a minimal prompt. Returns dict of results."""
