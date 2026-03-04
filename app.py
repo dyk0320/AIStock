@@ -372,6 +372,114 @@ def format_akshare_text(ak_data: dict) -> str:
 
 
 # =====================================================================
+# 模块2a+: 实时分时数据 (三湖量化API)
+# =====================================================================
+import requests
+
+@st.cache_data(ttl=60)
+def fetch_realtime(stock_code: str, token: str) -> dict:
+    """获取当日实时分时数据"""
+    if not token:
+        return {"error": "REALTIME_TOKEN not set"}
+    url = (f"http://www.sanhulianghua.com:2008/v1/hsa_fenshi"
+           f"?token={token}&code={stock_code}&all=1&simple=1")
+    try:
+        resp = requests.get(url, timeout=10)
+        raw = resp.json()
+        if raw.get("ret") != 200:
+            return {"error": f"API ret={raw.get('ret')}: {raw.get('msg', '')}"}
+
+        data_list = raw.get("data", [])
+        if not data_list:
+            return {"error": "data list empty (盘前无数据?)"}
+
+        # Take the latest tick
+        tick = data_list[-1]
+
+        # Unit conversions: prices in 0.1分(0.001元), pcts in 0.001%
+        def p(v):
+            return round(v / 1000, 3) if v else 0.0
+        def pct(v):
+            return round(v / 1000, 3) if v is not None else 0.0
+
+        result = {
+            "name": raw.get("name", ""),
+            "date": raw.get("date", ""),
+            "time": tick.get("ShiJian", ""),
+            "price": p(tick.get("JiaGe", 0)),
+            "open": p(tick.get("KaiPan", 0)),
+            "high": p(tick.get("ZuiGao", 0)),
+            "low": p(tick.get("ZuiDi", 0)),
+            "prev_close": p(tick.get("ZuoShou", 0)),
+            "avg_price": p(tick.get("JunJia", 0)),
+            "change_pct": pct(tick.get("ZhangFu", 0)),
+            "change_speed": pct(tick.get("ZhangSu", 0)),
+            "amplitude": pct(tick.get("ZhenFu", 0)),
+            "volume": tick.get("ZongLiang", 0),        # 手
+            "amount": tick.get("JinE", 0),              # 元
+            "turnover": pct(tick.get("HuanShou", 0)),
+            "vol_ratio": pct(tick.get("LiangBi", 0)),
+            "wei_bi": pct(tick.get("WeiBi", 0)),
+            "inner_vol": tick.get("NeiPan", 0),         # 手
+            "outer_vol": tick.get("WaiPan", 0),         # 手
+            "inner_outer_ratio": pct(tick.get("NeiWaiBi", 0)),
+            "pe": pct(tick.get("ShiYingLv", 0)),
+            "pb": pct(tick.get("ShiJingLv", 0)),
+            "market_cap": tick.get("ShiZhi", 0),        # 万元
+            "streak_days": tick.get("LianZhangTian", 0),
+            "chg_3d": pct(tick.get("03RiZhangFu", 0)),
+            "chg_5d": pct(tick.get("05RiZhangFu", 0)),
+            "chg_10d": pct(tick.get("10RiZhangFu", 0)),
+            "chg_20d": pct(tick.get("20RiZhangFu", 0)),
+            "chg_60d": pct(tick.get("60RiZhangFu", 0)),
+            "chg_1y": pct(tick.get("NianZhangFu", 0)),
+            "ticks_count": len(data_list),
+        }
+        return result
+    except requests.exceptions.Timeout:
+        return {"error": "API timeout (10s)"}
+    except Exception as e:
+        return {"error": f"{type(e).__name__}: {str(e)[:100]}"}
+
+
+def format_realtime_text(rt: dict) -> str:
+    """Format realtime data for LLM prompt"""
+    if "error" in rt:
+        return f"(实时数据不可用: {rt['error']})"
+
+    amt_yi = rt['amount'] / 1e8 if rt['amount'] else 0
+    cap_yi = rt['market_cap'] / 10000 if rt['market_cap'] else 0
+
+    # Streak description
+    streak = rt.get('streak_days', 0)
+    if streak > 0:
+        streak_str = f"连涨{streak}天"
+    elif streak < 0:
+        streak_str = f"连跌{abs(streak)}天"
+    else:
+        streak_str = "无连续涨跌"
+
+    # Inner/outer pressure
+    inner = rt.get('inner_vol', 0)
+    outer = rt.get('outer_vol', 0)
+    total = inner + outer
+    if total > 0:
+        buy_pct = outer / total * 100
+        pressure = f"外盘{buy_pct:.0f}%({'多方主导' if buy_pct > 55 else '空方主导' if buy_pct < 45 else '多空均衡'})"
+    else:
+        pressure = "N/A"
+
+    return f"""【实时盘口数据】({rt['date']} {rt['time']}更新, 共{rt['ticks_count']}个tick)
+现价: {rt['price']:.3f} | 涨幅: {rt['change_pct']:+.3f}% | 涨速: {rt['change_speed']:+.3f}%
+开盘: {rt['open']:.3f} | 最高: {rt['high']:.3f} | 最低: {rt['low']:.3f} | 昨收: {rt['prev_close']:.3f}
+均价: {rt['avg_price']:.3f} | 振幅: {rt['amplitude']:.3f}%
+成交量: {rt['volume']}手 | 成交额: {amt_yi:.2f}亿 | 换手率: {rt['turnover']:.3f}%
+量比: {rt['vol_ratio']:.3f} | 委比: {rt['wei_bi']:+.3f}% | {pressure}
+PE: {rt['pe']:.2f} | PB: {rt['pb']:.2f} | 总市值: {cap_yi:.1f}亿
+{streak_str} | 3日:{rt['chg_3d']:+.3f}% | 5日:{rt['chg_5d']:+.3f}% | 10日:{rt['chg_10d']:+.3f}% | 20日:{rt['chg_20d']:+.3f}% | 60日:{rt['chg_60d']:+.3f}% | 年:{rt['chg_1y']:+.3f}%"""
+
+
+# =====================================================================
 # 模块2b: 大盘 & 板块上下文 (Tushare + AKShare)
 # =====================================================================
 INDEX_MAP = {
@@ -1078,7 +1186,8 @@ JUDGE_SYSTEM_PROMPT = """你是"首席策略官", 主持5位交易员辩论会�
 # 模块8: 数据 Prompt 构建 (增强版)
 # =====================================================================
 def build_prompt(stock_name, ts_code, df, fina, business, news_text,
-                 risk_text, sentiment_text, akshare_text, market_text=""):
+                 risk_text, sentiment_text, akshare_text, market_text="",
+                 realtime_text=""):
     latest = df.iloc[-1]
     kline_lines = []
     for _, r in df.tail(15).iloc[::-1].iterrows():
@@ -1108,6 +1217,8 @@ def build_prompt(stock_name, ts_code, df, fina, business, news_text,
 
 ===== 标的: {stock_name} ({ts_code}) =====
 现价: {latest['close']:.2f} | 涨跌: {latest['pct_chg']:+.2f}%
+
+{realtime_text}
 
 【公司概况】{business}
 【财务指标】{' | '.join(fina_parts)}
@@ -1249,6 +1360,7 @@ def main():
         kline_days = st.selectbox("K线回溯天数", [30, 60, 90, 120], index=1)
         enable_search = st.toggle("联网搜索", value=True)
         enable_akshare = st.toggle("增强数据(AKShare)", value=True, help="资金流向/北向/融资融券/涨跌停")
+        enable_realtime = st.toggle("实时盘口", value=True, help="当日分时/盘口/涨速/内外盘")
         st.divider()
 
         # ---- Model status (always visible) ----
@@ -1370,6 +1482,13 @@ def main():
             ak_data = fetch_akshare_data(stock_code)
             akshare_text = format_akshare_text(ak_data)
 
+        rt_data = {}
+        realtime_text = ""
+        if enable_realtime:
+            st.write("⚡ 实时盘口数据...")
+            rt_data = fetch_realtime(stock_code, cfg.get("realtime_token", ""))
+            realtime_text = format_realtime_text(rt_data)
+
         st.write("🧠 情绪分析...")
         fg = MarketSentiment.calc_fear_greed(df, ak_data)
         regime = MarketSentiment.detect_regime(df)
@@ -1389,23 +1508,44 @@ def main():
 
     # ==================== 标题 & 指标卡片 ====================
     latest = df.iloc[-1]
-    change_pct = latest["pct_chg"]
-    change_color = "up" if change_pct >= 0 else "down"
+
+    # Use realtime data if available, else fall back to Tushare
+    if rt_data and "error" not in rt_data and rt_data.get("price", 0) > 0:
+        _price = rt_data["price"]
+        _chg_pct = rt_data["change_pct"]
+        _vol_ratio = rt_data["vol_ratio"]
+        _amount = rt_data["amount"] / 10000  # 元 -> 万
+        _time_tag = f"⚡ {rt_data.get('time', '')} 实时"
+        _extra_cards = f"""
+        <div class="metric-card"><div class="label">振幅</div><div class="value neutral">{rt_data['amplitude']:.2f}%</div></div>
+        <div class="metric-card"><div class="label">换手率</div><div class="value neutral">{rt_data['turnover']:.2f}%</div></div>
+        <div class="metric-card"><div class="label">委比</div><div class="value {'up' if rt_data['wei_bi'] > 0 else 'down'}">{rt_data['wei_bi']:+.1f}%</div></div>"""
+    else:
+        _price = latest['close']
+        _chg_pct = latest["pct_chg"]
+        _vol_ratio = latest.get("VOL_RATIO", 1.0)
+        _amount = latest['amount'] / 10000
+        _time_tag = ""
+        _extra_cards = ""
+
+    change_color = "up" if _chg_pct >= 0 else "down"
 
     st.markdown(f"## {stock_name}  `{ts_code}`")
+    if _time_tag:
+        st.caption(_time_tag)
 
     rsi_val = latest.get("RSI", 50)
     rsi_class = "up" if pd.notna(rsi_val) and rsi_val > 70 else ("down" if pd.notna(rsi_val) and rsi_val < 30 else "neutral")
-    vol_ratio = latest.get("VOL_RATIO", 1.0)
-    vr_class = "up" if pd.notna(vol_ratio) and vol_ratio > 1.5 else ("down" if pd.notna(vol_ratio) and vol_ratio < 0.5 else "neutral")
+    vr_class = "up" if _vol_ratio > 1.5 else ("down" if _vol_ratio < 0.5 else "neutral")
 
     st.markdown(f"""
     <div class="metrics-grid">
-        <div class="metric-card"><div class="label">最新价</div><div class="value {change_color}">{latest['close']:.2f}</div></div>
-        <div class="metric-card"><div class="label">涨跌幅</div><div class="value {change_color}">{change_pct:+.2f}%</div></div>
+        <div class="metric-card"><div class="label">最新价</div><div class="value {change_color}">{_price:.2f}</div></div>
+        <div class="metric-card"><div class="label">涨跌幅</div><div class="value {change_color}">{_chg_pct:+.2f}%</div></div>
         <div class="metric-card"><div class="label">RSI(14)</div><div class="value {rsi_class}">{rsi_val:.1f}</div></div>
-        <div class="metric-card"><div class="label">量比</div><div class="value {vr_class}">{vol_ratio:.2f}</div></div>
-        <div class="metric-card"><div class="label">成交额</div><div class="value neutral">{latest['amount']/10000:.0f}万</div></div>
+        <div class="metric-card"><div class="label">量比</div><div class="value {vr_class}">{_vol_ratio:.2f}</div></div>
+        <div class="metric-card"><div class="label">成交额</div><div class="value neutral">{_amount:.0f}万</div></div>
+        {_extra_cards}
     </div>""", unsafe_allow_html=True)
 
     # Signal tags
@@ -1518,7 +1658,8 @@ def main():
     st.caption("5 位不同风格交易员 + CoT推理 → 首席策略官裁决")
 
     data_prompt = build_prompt(stock_name, ts_code, df, fina, business, news_text,
-                                risk_text, sentiment_text, akshare_text, market_text)
+                                risk_text, sentiment_text, akshare_text, market_text,
+                                realtime_text)
     agent_opinions = []
 
     # Convert user choices to priority tuples
@@ -1589,6 +1730,13 @@ def main():
     if enable_akshare:
         with st.expander("💰 资金流向详情"):
             st.text(akshare_text)
+
+    if enable_realtime and realtime_text:
+        with st.expander("⚡ 实时盘口详情"):
+            if "error" in rt_data:
+                st.warning(realtime_text)
+            else:
+                st.text(realtime_text)
 
     if news_text and enable_search:
         with st.expander("🌐 联网搜索结果"):
