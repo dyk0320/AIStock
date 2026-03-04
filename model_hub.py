@@ -19,7 +19,7 @@ def get_config():
         "tushare_token": st.secrets["TUSHARE_TOKEN"],
         "tushare_proxy": st.secrets.get("TUSHARE_PROXY_URL", ""),
         "gemini_model": st.secrets.get("GEMINI_MODEL",
-                        "gemini-2.5-flash-preview-04-17"),
+                        "gemini-3.1-pro-preview"),
         "deepseek_key": st.secrets.get("DEEPSEEK_API_KEY", ""),
         "deepseek_model": st.secrets.get("DEEPSEEK_MODEL",
                           "deepseek-chat"),
