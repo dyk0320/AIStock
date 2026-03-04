@@ -1101,20 +1101,38 @@ RSI(14): {rsi_val:.1f}
 # =====================================================================
 # 模块9: Agent 调用
 # =====================================================================
-def run_single_agent(hub, agent, data_prompt):
+_PRIORITY_MAP = {
+    "DeepSeek": ("deepseek", "qwen", "gemini"),
+    "Qwen":     ("qwen", "deepseek", "gemini"),
+    "Gemini":   ("gemini", "deepseek", "qwen"),
+}
+_DEFAULT_AGENT_PRIORITY = ("deepseek", "qwen", "gemini")
+_DEFAULT_JUDGE_PRIORITY = ("qwen", "deepseek", "gemini")
+
+def _get_priority(choice, default):
+    """Convert user model choice to priority tuple."""
+    if choice and choice in _PRIORITY_MAP:
+        return _PRIORITY_MAP[choice]
+    return default
+
+def run_single_agent(hub, agent, data_prompt, priority=None):
+    if priority is None:
+        priority = _DEFAULT_AGENT_PRIORITY
     text, provider = hub.generate(
         sys_prompt=agent["system_prompt"],
         user_prompt=data_prompt,
         temperature=0.5, max_tokens=1500,
-        priority=("deepseek", "qwen", "gemini"),
+        priority=priority,
     )
     if not text:
         return "(该交易员未给出意见: 模型返回空内容)", "None"
     if text.startswith("[ALL FAILED]"):
-        return text, "None"  # show actual error chain
+        return text, "None"
     return text, provider
 
-def run_judge(hub, stock_name, data_prompt, agent_opinions):
+def run_judge(hub, stock_name, data_prompt, agent_opinions, priority=None):
+    if priority is None:
+        priority = _DEFAULT_JUDGE_PRIORITY
     opinions_text = ""
     for agent, opinion, prov in agent_opinions:
         opinions_text += chr(10) + "="*40 + chr(10)
@@ -1128,7 +1146,7 @@ def run_judge(hub, stock_name, data_prompt, agent_opinions):
         sys_prompt=JUDGE_SYSTEM_PROMPT,
         user_prompt=jp,
         temperature=0.3, max_tokens=3000,
-        priority=("qwen", "deepseek", "gemini"),
+        priority=priority,
     )
     return stream, provider
 
@@ -1208,10 +1226,18 @@ def main():
             for name, err in init_errors.items():
                 if name not in providers:
                     st.caption(f"🔴 {name}: {str(err)[:60]}")
-            if len(providers) > 1:
-                st.caption(f"Fallback: {' → '.join(providers)}")
-            elif len(providers) == 0:
-                st.error("⚠️ 无可用模型!")
+
+            # ---- Model selection ----
+            st.markdown("**🎯 模型选择**")
+            _model_options = ["自动 (推荐)"] + providers
+            agent_model_choice = st.selectbox(
+                "Agent模型 (5位交易员)",
+                _model_options, index=0,
+                help="自动=DeepSeek优先, 失败自动切换")
+            judge_model_choice = st.selectbox(
+                "裁判模型 (首席策略官)",
+                _model_options, index=0,
+                help="自动=Qwen优先, 失败自动切换")
 
             # Diagnostic button - always visible
             if hasattr(hub, "diagnose"):
@@ -1227,6 +1253,8 @@ def main():
                             st.error(f"❌ {name}: {res['error'][:120]}")
         else:
             st.error(f"初始化失败: {_init_err if not _init_ok else '未知'}")
+            agent_model_choice = "自动 (推荐)"
+            judge_model_choice = "自动 (推荐)"
 
         st.divider()
         st.caption("⚠️ 分析仅供参考，不构成投资建议")
@@ -1458,10 +1486,14 @@ def main():
                                 risk_text, sentiment_text, akshare_text, market_text)
     agent_opinions = []
 
+    # Convert user choices to priority tuples
+    _agent_pri = _get_priority(agent_model_choice, _DEFAULT_AGENT_PRIORITY)
+    _judge_pri = _get_priority(judge_model_choice, _DEFAULT_JUDGE_PRIORITY)
+
     with st.status("交易员辩论中...", expanded=True) as ds:
         for agent in TRADER_AGENTS:
             st.write(f"{agent['emoji']} {agent['name']}正在分析...")
-            opinion, prov = run_single_agent(hub, agent, data_prompt)
+            opinion, prov = run_single_agent(hub, agent, data_prompt, priority=_agent_pri)
             if prov == "None":
                 st.write(f"  ⚠️ {agent['name']}失败: {opinion[:120]}")
             else:
@@ -1469,7 +1501,7 @@ def main():
             agent_opinions.append((agent, opinion, prov))
             time.sleep(0.3)
         st.write("🎯 首席策略官裁决中...")
-        judge_stream, judge_prov = run_judge(hub, stock_name, data_prompt, agent_opinions)
+        judge_stream, judge_prov = run_judge(hub, stock_name, data_prompt, agent_opinions, priority=_judge_pri)
         st.write(f"  裁判模型: {judge_prov}")
         ds.update(label="辩论完毕 ✅", state="complete", expanded=False)
 
