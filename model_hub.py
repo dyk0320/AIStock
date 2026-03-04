@@ -1,11 +1,16 @@
-"""model_hub.py - Multi-model router with auto fallback"""
+"""model_hub.py v2 - Multi-model router with error tracking & diagnostics"""
 import streamlit as st
+import traceback
 from google import genai
 from google.genai import types
+
+# --- OpenAI SDK (DeepSeek / Qwen 共用) ---
+_openai_import_err = None
 try:
     from openai import OpenAI
-except ImportError:
+except ImportError as _e:
     OpenAI = None
+    _openai_import_err = str(_e)
 
 
 def get_config():
@@ -14,51 +19,72 @@ def get_config():
         "tushare_token": st.secrets["TUSHARE_TOKEN"],
         "tushare_proxy": st.secrets.get("TUSHARE_PROXY_URL", ""),
         "gemini_model": st.secrets.get("GEMINI_MODEL",
-                        "gemini-3-flash-preview"),
+                        "gemini-2.5-flash-preview-04-17"),
         "deepseek_key": st.secrets.get("DEEPSEEK_API_KEY", ""),
         "deepseek_model": st.secrets.get("DEEPSEEK_MODEL",
                           "deepseek-chat"),
         "deepseek_base_url": st.secrets.get("DEEPSEEK_BASE_URL",
                              "https://api.deepseek.com"),
         "qwen_key": st.secrets.get("QWEN_API_KEY", ""),
-        "qwen_model": st.secrets.get("QWEN_MODEL", "qwen3.5-plus"),
+        "qwen_model": st.secrets.get("QWEN_MODEL", "qwen-plus"),
         "qwen_base_url": st.secrets.get("QWEN_BASE_URL",
             "https://dashscope.aliyuncs.com/compatible-mode/v1"),
     }
 
+
 class ModelHub:
-    """DeepSeek > Qwen > Gemini with auto fallback"""
+    """DeepSeek / Qwen / Gemini with auto fallback + full error tracking"""
 
     def __init__(self, cfg):
         self.cfg = cfg
         self.gemini_client = None
         self.deepseek_client = None
         self.qwen_client = None
+        self.init_errors = {}       # provider -> error string
+        self.call_log = []          # [(provider, success, error_str)]
         self._init_providers()
-        self.call_log = []
 
     def _init_providers(self):
         c = self.cfg
+
+        # --- Gemini ---
         if c["gemini_key"]:
             try:
-                self.gemini_client = genai.Client(
-                    api_key=c["gemini_key"])
-            except Exception:
-                pass
-        if c["deepseek_key"] and OpenAI:
+                self.gemini_client = genai.Client(api_key=c["gemini_key"])
+            except Exception as e:
+                self.init_errors["Gemini"] = f"Client init failed: {e}"
+        else:
+            self.init_errors["Gemini"] = "GEMINI_API_KEY not set"
+
+        # --- DeepSeek ---
+        if not c["deepseek_key"]:
+            self.init_errors["DeepSeek"] = "DEEPSEEK_API_KEY not set"
+        elif OpenAI is None:
+            self.init_errors["DeepSeek"] = (
+                f"openai package not installed! pip install openai. "
+                f"Import error: {_openai_import_err}")
+        else:
             try:
                 self.deepseek_client = OpenAI(
                     api_key=c["deepseek_key"],
                     base_url=c["deepseek_base_url"])
-            except Exception:
-                pass
-        if c["qwen_key"] and OpenAI:
+            except Exception as e:
+                self.init_errors["DeepSeek"] = f"Client init failed: {e}"
+
+        # --- Qwen ---
+        if not c["qwen_key"]:
+            self.init_errors["Qwen"] = "QWEN_API_KEY not set"
+        elif OpenAI is None:
+            self.init_errors["Qwen"] = (
+                f"openai package not installed! pip install openai. "
+                f"Import error: {_openai_import_err}")
+        else:
             try:
                 self.qwen_client = OpenAI(
                     api_key=c["qwen_key"],
                     base_url=c["qwen_base_url"])
-            except Exception:
-                pass
+            except Exception as e:
+                self.init_errors["Qwen"] = f"Client init failed: {e}"
 
     def available_providers(self):
         p = []
@@ -70,84 +96,123 @@ class ModelHub:
             p.append("Gemini")
         return p
 
+    def _get_client(self, prov):
+        """Return (client_or_None, model_name, is_oai_style)"""
+        if prov == "deepseek":
+            return self.deepseek_client, self.cfg["deepseek_model"], True
+        elif prov == "qwen":
+            return self.qwen_client, self.cfg["qwen_model"], True
+        elif prov == "gemini":
+            return self.gemini_client, self.cfg["gemini_model"], False
+        return None, None, False
+
     def _call_oai(self, cl, mdl, sp, up, t=0.5, mt=1500):
         ms = []
-        if sp: ms.append({"role":"system","content":sp})
-        ms.append({"role":"user","content":up})
-        r = cl.chat.completions.create(model=mdl,messages=ms,temperature=t,max_tokens=mt)
+        if sp:
+            ms.append({"role": "system", "content": sp})
+        ms.append({"role": "user", "content": up})
+        r = cl.chat.completions.create(
+            model=mdl, messages=ms,
+            temperature=t, max_tokens=mt)
         return r.choices[0].message.content or ""
 
     def _stream_oai(self, cl, mdl, sp, up, t=0.3, mt=3000):
         ms = []
-        if sp: ms.append({"role":"system","content":sp})
-        ms.append({"role":"user","content":up})
-        s = cl.chat.completions.create(model=mdl,messages=ms,temperature=t,max_tokens=mt,stream=True)
-        for c in s:
-            d = c.choices[0].delta if c.choices else None
-            if d and d.content: yield d.content
+        if sp:
+            ms.append({"role": "system", "content": sp})
+        ms.append({"role": "user", "content": up})
+        s = cl.chat.completions.create(
+            model=mdl, messages=ms,
+            temperature=t, max_tokens=mt, stream=True)
+        for chunk in s:
+            d = chunk.choices[0].delta if chunk.choices else None
+            if d and d.content:
+                yield d.content
 
     def _call_gemini(self, sp, up, t=0.5, mt=1500):
         r = self.gemini_client.models.generate_content(
-            model=self.cfg["gemini_model"],contents=up,
-            config=types.GenerateContentConfig(system_instruction=sp,temperature=t,max_output_tokens=mt))
+            model=self.cfg["gemini_model"], contents=up,
+            config=types.GenerateContentConfig(
+                system_instruction=sp,
+                temperature=t, max_output_tokens=mt))
         return r.text if r.text else ""
 
     def _stream_gemini(self, sp, up, t=0.3, mt=3000):
         s = self.gemini_client.models.generate_content_stream(
-            model=self.cfg["gemini_model"],contents=up,
-            config=types.GenerateContentConfig(system_instruction=sp,temperature=t,max_output_tokens=mt))
+            model=self.cfg["gemini_model"], contents=up,
+            config=types.GenerateContentConfig(
+                system_instruction=sp,
+                temperature=t, max_output_tokens=mt))
         for c in s:
-            if c.text: yield c.text
+            if c.text:
+                yield c.text
 
+    # ----- Main generate (non-stream) -----
     def generate(self, sys_prompt, user_prompt, temperature=0.5,
-                  max_tokens=1500, priority=("deepseek","qwen","gemini")):
-        last_err = None
+                 max_tokens=1500, priority=("deepseek", "qwen", "gemini")):
+        errors = []
+        _NAMES = {"deepseek": "DeepSeek", "qwen": "Qwen", "gemini": "Gemini"}
         for prov in priority:
-            try:
-                if prov=="deepseek" and self.deepseek_client:
-                    txt = self._call_oai(self.deepseek_client,self.cfg["deepseek_model"],sys_prompt,user_prompt,temperature,max_tokens)
-                    self.call_log.append(("DeepSeek",True)); return txt,"DeepSeek"
-                elif prov=="qwen" and self.qwen_client:
-                    txt = self._call_oai(self.qwen_client,self.cfg["qwen_model"],sys_prompt,user_prompt,temperature,max_tokens)
-                    self.call_log.append(("Qwen",True)); return txt,"Qwen"
-                elif prov=="gemini" and self.gemini_client:
-                    txt = self._call_gemini(sys_prompt,user_prompt,temperature,max_tokens)
-                    self.call_log.append(("Gemini",True)); return txt,"Gemini"
-            except Exception as e:
-                import traceback
-                print(f"[ModelHub] {prov} FAILED: {type(e).__name__}: {e}")
-                traceback.print_exc()
-                last_err = e; self.call_log.append((prov,False)); continue
-        print(f"[ModelHub] ALL FAILED. last_err={last_err}")
-        return f"(all models failed: {last_err})","None"
-
-    def generate_stream(self, sys_prompt, user_prompt, temperature=0.3,
-                         max_tokens=3000, priority=("qwen","deepseek","gemini")):
-        for prov in priority:
-            try:
-                if prov=="deepseek" and self.deepseek_client:
-                    return self._stream_oai(self.deepseek_client,self.cfg["deepseek_model"],sys_prompt,user_prompt,temperature,max_tokens),"DeepSeek"
-                elif prov=="qwen" and self.qwen_client:
-                    return self._stream_oai(self.qwen_client,self.cfg["qwen_model"],sys_prompt,user_prompt,temperature,max_tokens),"Qwen"
-                elif prov=="gemini" and self.gemini_client:
-                    return self._stream_gemini(sys_prompt,user_prompt,temperature,max_tokens),"Gemini"
-            except Exception as e:
-                # ========== 加这三行 ==========
-                import traceback
-                print(f"[ModelHub stream] {prov} FAILED: {type(e).__name__}: {e}")
-                traceback.print_exc()
-                # ==============================
+            label = _NAMES.get(prov, prov)
+            client, model, is_oai = self._get_client(prov)
+            if client is None:
+                reason = self.init_errors.get(label, "client not initialized")
+                errors.append(f"{label}: {reason}")
                 continue
-        # ========== 加这一行 ==========
-        print("[ModelHub stream] ALL FAILED")
-        return None,"None"
+            try:
+                if is_oai:
+                    txt = self._call_oai(client, model, sys_prompt,
+                                         user_prompt, temperature, max_tokens)
+                else:
+                    txt = self._call_gemini(sys_prompt, user_prompt,
+                                            temperature, max_tokens)
+                self.call_log.append((label, True, ""))
+                return txt, label
+            except Exception as e:
+                err_short = f"{type(e).__name__}: {str(e)[:200]}"
+                errors.append(f"{label}: {err_short}")
+                self.call_log.append((label, False, err_short))
+                continue
 
+        # All failed - return detailed error
+        err_detail = " | ".join(errors)
+        return f"[ALL FAILED] {err_detail}", "None"
+
+    # ----- Stream generate (for judge) -----
+    def generate_stream(self, sys_prompt, user_prompt, temperature=0.3,
+                        max_tokens=3000, priority=("qwen", "deepseek", "gemini")):
+        _NAMES = {"deepseek": "DeepSeek", "qwen": "Qwen", "gemini": "Gemini"}
+        errors = []
+        for prov in priority:
+            label = _NAMES.get(prov, prov)
+            client, model, is_oai = self._get_client(prov)
+            if client is None:
+                continue
+            try:
+                if is_oai:
+                    gen = self._stream_oai(client, model, sys_prompt,
+                                           user_prompt, temperature, max_tokens)
+                else:
+                    gen = self._stream_gemini(sys_prompt, user_prompt,
+                                              temperature, max_tokens)
+                return gen, label
+            except Exception as e:
+                errors.append(f"{prov}: {e}")
+                continue
+
+        # Return an error generator
+        def _err_gen():
+            yield f"[ALL FAILED] {' | '.join(errors)}"
+        return _err_gen(), "None"
+
+    # ----- News search (Gemini only) -----
     def search_news(self, stock_name, business):
-        prompt = ('A股 "' + stock_name + '" (主营:' + business
-                  + ') 最新:1.行业政策 2.公司公告 3.行业趋势 4.机构评级 5.风险事件'
-                  + ' 每条2-3句,标注来源和时间')
+        prompt = (f'A股 "{stock_name}" (主营:{business}) '
+                  '最新:1.行业政策 2.公司公告 3.行业趋势 4.机构评级 5.风险事件'
+                  ' 每条2-3句,标注来源和时间')
         if not self.gemini_client:
-            return '(Gemini未配置,联网搜索不可用)'
+            return ('(联网搜索不可用: ' +
+                    self.init_errors.get("Gemini", "Gemini未配置") + ')')
         try:
             r = self.gemini_client.models.generate_content(
                 model=self.cfg['gemini_model'], contents=prompt,
@@ -164,12 +229,46 @@ class ModelHub:
                             sources.append('- ' + ch.web.title)
             except Exception:
                 pass
-            src = chr(10).join(sources) if sources else '(无明确来源)'
-            return '【联网搜索】' + chr(10) + text + chr(10)*2 + '来源:' + chr(10) + src
+            src = '\n'.join(sources) if sources else '(无明确来源)'
+            return f'【联网搜索】\n{text}\n\n来源:\n{src}'
         except Exception as e:
-            return '(联网搜索异常: ' + str(e) + ')'
+            return f'(联网搜索异常: {type(e).__name__}: {e})'
+
+    # ----- Diagnostic test -----
+    def diagnose(self):
+        """Test each provider with a minimal prompt. Returns dict of results."""
+        results = {}
+        test_sp = "回答用中文,10字以内"
+        test_up = "说一句话证明你在工作"
+
+        for name, client, model, is_oai in [
+            ("DeepSeek", self.deepseek_client,
+             self.cfg["deepseek_model"], True),
+            ("Qwen", self.qwen_client,
+             self.cfg["qwen_model"], True),
+            ("Gemini", self.gemini_client,
+             self.cfg["gemini_model"], False),
+        ]:
+            if client is None:
+                results[name] = {
+                    "status": "NOT_INIT",
+                    "error": self.init_errors.get(name, "client is None")}
+                continue
+            try:
+                if is_oai:
+                    txt = self._call_oai(client, model, test_sp, test_up,
+                                         0.5, 50)
+                else:
+                    txt = self._call_gemini(test_sp, test_up, 0.5, 50)
+                results[name] = {"status": "OK", "response": txt[:100]}
+            except Exception as e:
+                results[name] = {
+                    "status": "FAILED",
+                    "error": f"{type(e).__name__}: {str(e)[:300]}"}
+        return results
 
 
+# ----- Tushare init -----
 import tushare as ts
 
 @st.cache_resource
