@@ -30,7 +30,7 @@ st.set_page_config(
     page_title="A股智能分析系统 v4",
     page_icon="📈",
     layout="wide",
-    initial_sidebar_state="collapsed",
+    initial_sidebar_state="expanded",
 )
 
 # =====================================================================
@@ -1244,6 +1244,20 @@ def main():
         analyze_btn = st.button("🚀 分析", type="primary", use_container_width=True)
 
     if not analyze_btn or not stock_code:
+        # Show model status on main page too
+        if _init_ok and hub:
+            providers = hub.available_providers()
+            init_errors = getattr(hub, "init_errors", {})
+            status_parts = []
+            for p in providers:
+                status_parts.append(f"🟢 {p}")
+            for name, err in init_errors.items():
+                if name not in providers:
+                    status_parts.append(f"🔴 {name}")
+            st.caption("模型: " + "  ".join(status_parts))
+        elif not _init_ok:
+            st.error(f"⚠️ 模型初始化失败: {_init_err}")
+
         st.markdown("""
         <div class="landing-grid">
             <div class="landing-card"><h4>🔍 技术+风险</h4><p>MA/MACD/RSI/布林带<br>VaR · CVaR · 最大回撤 · Sharpe</p></div>
