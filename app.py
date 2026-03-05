@@ -382,7 +382,7 @@ def fetch_realtime(stock_code: str, token: str) -> dict:
     if not token:
         return {"error": "REALTIME_TOKEN not set"}
     url = (f"http://www.sanhulianghua.com:2008/v1/hsa_fenshi"
-           f"?token={token}&code={stock_code}&all=1&simple=1")
+           f"?token={token}&code={stock_code}&all=1&simple=0")
     try:
         resp = requests.get(url, timeout=10)
         raw = resp.json()
