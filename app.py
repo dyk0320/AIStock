@@ -202,10 +202,23 @@ def build_ts_code(code: str) -> str:
 def fetch_kline(_pro, ts_code: str, days: int = 60):
     end = datetime.datetime.now().strftime("%Y%m%d")
     start = (datetime.datetime.now() - datetime.timedelta(days=days + 15)).strftime("%Y%m%d")
-    df = _pro.daily(ts_code=ts_code, start_date=start, end_date=end)
-    if df.empty:
-        return df
-    return df.sort_values("trade_date").reset_index(drop=True)
+    last_err = None
+    for attempt in range(3):
+        try:
+            df = _pro.daily(ts_code=ts_code, start_date=start, end_date=end)
+            if df is None or df.empty:
+                # Return a DataFrame with error info as attribute
+                empty = pd.DataFrame()
+                empty.attrs["error"] = f"API returned empty (start={start}, end={end})"
+                return empty
+            return df.sort_values("trade_date").reset_index(drop=True)
+        except Exception as e:
+            last_err = e
+            import time; time.sleep(1 * (attempt + 1))
+    # All retries failed
+    empty = pd.DataFrame()
+    empty.attrs["error"] = f"{type(last_err).__name__}: {last_err}"
+    return empty
 
 
 @st.cache_data(ttl=600)
@@ -382,7 +395,7 @@ def fetch_realtime(stock_code: str, token: str) -> dict:
     if not token:
         return {"error": "REALTIME_TOKEN not set"}
     url = (f"http://www.sanhulianghua.com:2008/v1/hsa_fenshi"
-           f"?token={token}&code={stock_code}&all=1&simple=0")
+           f"?token={token}&code={stock_code}&all=1&simple=1")
     try:
         resp = requests.get(url, timeout=10)
         raw = resp.json()
@@ -1913,55 +1926,79 @@ def main():
 
     ts_code = build_ts_code(stock_code)
 
-    # ==================== 数据获取 ====================
+    # ==================== 数据获取 (并行加速) ====================
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    import time as _time
+
     with st.status("正在获取数据...", expanded=True) as status:
-        st.write("📥 K线数据...")
-        df = fetch_kline(pro, ts_code, kline_days)
+        t0 = _time.time()
+        rt_token = cfg.get("realtime_token", "")
+
+        # --- Wave 1: 所有独立网络请求并行 ---
+        st.write("🚀 并行获取数据...")
+        futures = {}
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            futures["kline"] = pool.submit(fetch_kline, pro, ts_code, kline_days)
+            futures["fina"] = pool.submit(fetch_financial, pro, ts_code)
+            futures["name"] = pool.submit(fetch_stock_name, pro, ts_code)
+            futures["biz"] = pool.submit(fetch_company, pro, ts_code)
+            if enable_akshare:
+                futures["ak"] = pool.submit(fetch_akshare_data, stock_code)
+            if enable_realtime:
+                futures["rt"] = pool.submit(fetch_realtime, stock_code, rt_token)
+                futures["rt_idx"] = pool.submit(fetch_realtime_indices, rt_token)
+            if enable_search and hasattr(hub, "search_macro"):
+                futures["macro"] = pool.submit(hub.search_macro)
+
+            # Wait for kline first — everything else depends on it
+            df = futures.pop("kline").result()
+
         if df.empty:
-            st.error(f"未找到 {ts_code} 的数据")
+            err = df.attrs.get("error", "")
+            st.error(f"❌ 未找到 {ts_code} 的K线数据")
+            if err:
+                st.warning(f"错误详情: {err}")
+            with st.expander("🔧 诊断信息", expanded=True):
+                try:
+                    test = pro.trade_cal(exchange='SSE', start_date='20250101', end_date='20250102')
+                    if test is not None and not test.empty:
+                        st.success("✅ Tushare API 连接正常")
+                        st.info(f"可能原因:\n"
+                                f"- Token积分不足(pro.daily需要200+积分)\n"
+                                f"- 代码 {ts_code} 可能已退市或不在当前数据权限范围\n"
+                                f"- 请在 tushare.pro 个人中心检查积分等级")
+                    else:
+                        st.error("❌ Tushare API 连接异常 — trade_cal返回空")
+                except Exception as diag_e:
+                    st.error(f"❌ Tushare API 连接失败: {diag_e}")
+                    st.info("请检查:\n"
+                            "1. TUSHARE_TOKEN 是否正确\n"
+                            "2. TUSHARE_PROXY_URL 是否可达\n"
+                            "3. Streamlit Cloud 网络是否正常")
             return
 
-        st.write("📊 财务数据...")
-        fina = fetch_financial(pro, ts_code)
-
-        st.write("🏢 公司信息...")
-        stock_name = fetch_stock_name(pro, ts_code)
-        business = fetch_company(pro, ts_code)
-
-        st.write("⚙️ 技术指标...")
+        # --- Wave 2: 本地计算 (同时 Wave 1 剩余请求在后台继续) ---
+        st.write("⚙️ 技术指标 & 风险分析...")
         df = TechEngine.calc_all(df)
         signals = TechEngine.get_signals(df)
         levels = TechEngine.support_resistance(df)
-
-        st.write("📉 风险指标...")
         risk = RiskEngine.calc_all(df)
         risk_text = RiskEngine.format_text(risk)
 
-        ak_data = {}
-        akshare_text = "(增强数据已关闭)"
-        if enable_akshare:
-            st.write("💰 资金流向 / 北向 / 融资融券...")
-            ak_data = fetch_akshare_data(stock_code)
-            akshare_text = format_akshare_text(ak_data)
+        # --- Collect Wave 1 results ---
+        fina = futures.pop("fina").result()
+        stock_name = futures.pop("name").result()
+        business = futures.pop("biz").result()
+        st.write(f"📊 {stock_name} 数据就绪")
 
-        rt_data = {}
-        realtime_text = ""
-        if enable_realtime:
-            st.write("⚡ 实时盘口数据...")
-            rt_data = fetch_realtime(stock_code, cfg.get("realtime_token", ""))
-            realtime_text = format_realtime_text(rt_data)
+        ak_data = futures.pop("ak").result() if "ak" in futures else {}
+        akshare_text = format_akshare_text(ak_data) if ak_data else "(增强数据已关闭)"
 
-        st.write("🧠 情绪分析...")
-        fg = MarketSentiment.calc_fear_greed(df, ak_data)
-        regime = MarketSentiment.detect_regime(df)
-        sentiment_text = MarketSentiment.format_text(fg, regime)
+        rt_data = futures.pop("rt").result() if "rt" in futures else {}
+        realtime_text = format_realtime_text(rt_data) if rt_data else ""
 
-        st.write("🌍 大盘 & 板块分析...")
-        rt_indices = {}
-        if enable_realtime:
-            st.write("  ⚡ 实时指数数据...")
-            rt_indices = fetch_realtime_indices(cfg.get("realtime_token", ""))
-            # Show any index fetch errors
+        rt_indices = futures.pop("rt_idx").result() if "rt_idx" in futures else {}
+        if rt_indices:
             for idx_name, idx_data in rt_indices.items():
                 if idx_name == "_meta":
                     if idx_data.get("error"):
@@ -1970,22 +2007,32 @@ def main():
                     st.write(f"  ⚠️ {idx_name}: {idx_data['error']}")
                 elif isinstance(idx_data, dict) and idx_data.get("price"):
                     st.write(f"  ✅ {idx_name}: {idx_data['price']:.3f} ({idx_data['change_pct']:+.3f}%)")
-        mkt_ctx = MarketContext.analyze_indices(pro, rt_indices=rt_indices)
-        sector_ctx = MarketContext.analyze_sector(pro, ts_code)
-        market_text = MarketContext.format_text(mkt_ctx, sector_ctx)
 
-        news_text = ""
-        macro_text = ""
-        if enable_search:
-            st.write("🌐 联网搜索 (个股消息)...")
-            news_text = hub.search_news(stock_name, business)
-            if hasattr(hub, "search_macro"):
-                st.write("🌍 联网搜索 (国际宏观)...")
-                macro_text = hub.search_macro()
-            else:
-                st.write("⚠️ search_macro 不可用, 请更新 model_hub.py 并 Reboot")
+        macro_text = futures.pop("macro").result() if "macro" in futures else ""
 
-        status.update(label="数据准备完毕 ✅", state="complete", expanded=False)
+        # --- Wave 3: 依赖前序结果的请求 (并行) ---
+        st.write("🌍 大盘 & 板块 & 搜索...")
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            f_mkt = pool.submit(MarketContext.analyze_indices, pro, rt_indices)
+            f_sector = pool.submit(MarketContext.analyze_sector, pro, ts_code)
+            if enable_search:
+                f_news = pool.submit(hub.search_news, stock_name, business)
+
+            mkt_ctx = f_mkt.result()
+            sector_ctx = f_sector.result()
+            market_text = MarketContext.format_text(mkt_ctx, sector_ctx)
+
+            news_text = ""
+            if enable_search:
+                news_text = f_news.result()
+
+        # --- 情绪分析 (本地, 需要 df + ak_data) ---
+        fg = MarketSentiment.calc_fear_greed(df, ak_data)
+        regime = MarketSentiment.detect_regime(df)
+        sentiment_text = MarketSentiment.format_text(fg, regime)
+
+        elapsed = _time.time() - t0
+        status.update(label=f"数据准备完毕 ✅ ({elapsed:.1f}s)", state="complete", expanded=False)
 
     # ==================== 标题 & 指标卡片 ====================
     latest = df.iloc[-1]
