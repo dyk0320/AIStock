@@ -19,7 +19,7 @@ def get_config():
         "tushare_token": st.secrets["TUSHARE_TOKEN"],
         "tushare_proxy": st.secrets.get("TUSHARE_PROXY_URL", ""),
         "gemini_model": st.secrets.get("GEMINI_MODEL",
-                        "gemini-3.1-pro-preview"),
+                        "gemini-2.5-flash-preview-04-17"),
         "deepseek_key": st.secrets.get("DEEPSEEK_API_KEY", ""),
         "deepseek_model": st.secrets.get("DEEPSEEK_MODEL",
                           "deepseek-chat"),
@@ -313,7 +313,33 @@ def init_clients():
     cfg = get_config()
     hub = ModelHub(cfg)
     ts.set_token(cfg['tushare_token'])
-    pro = ts.pro_api()
-    if cfg['tushare_proxy']:
-        pro._DataApi__http_url = cfg['tushare_proxy']
+    proxy_url = cfg.get('tushare_proxy', '').strip()
+
+    pro = ts.pro_api(token=cfg['tushare_token'])
+
+    if proxy_url:
+        # Tushare SDK 1.4+ uses http://api.waditu.com/dataapi as default
+        # and appends /{api_name} to the URL.
+        # Users may provide:
+        #   "https://api.tushare.pro"         -> needs /dataapi appended
+        #   "https://api.tushare.pro/dataapi" -> ready to use
+        #   "http://api.waditu.com/dataapi"   -> same as default
+        if not proxy_url.rstrip('/').endswith('/dataapi'):
+            proxy_url = proxy_url.rstrip('/') + '/dataapi'
+        try:
+            pro._DataApi__http_url = proxy_url
+            actual = pro._DataApi__http_url
+            print(f"[Tushare] URL set to: {actual}")
+        except Exception as e:
+            print(f"[Tushare] Failed to set proxy: {e}")
+    else:
+        print(f"[Tushare] Using default URL: {pro._DataApi__http_url}")
+
+    # Quick connection test
+    try:
+        test = pro.trade_cal(exchange='SSE', start_date='20250101', end_date='20250102')
+        print(f"[Tushare] Connection OK (trade_cal returned {len(test)} rows)")
+    except Exception as e:
+        print(f"[Tushare] Connection FAILED: {e}")
+
     return hub, pro, cfg
